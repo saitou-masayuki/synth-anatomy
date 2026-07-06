@@ -41,6 +41,7 @@ body {
 }
 .brand { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); white-space: nowrap; }
 .brand .accent { color: var(--accent); margin-right: 7px; }
+.bar-left { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .bar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 select, .icon-btn, button.text-btn {
   background: var(--panel); color: var(--text-dim); border: 1px solid var(--border);
@@ -246,4 +247,21 @@ footer .lg-mod { color: var(--mod-line); }
   #signalRack { grid-template-columns: 1fr 1fr; }
   #signalRack .pipe { display: none; }
   #modRack { grid-template-columns: 1fr; }
+  /* ノブ列と説明/スコープを横並びのままにすると、幅が足りず日本語が1文字ずつ折り返される。
+     縦積みにして、各要素が横幅いっぱいを使えるようにする */
+  #modRack .block { flex-direction: column; }
+}
+
+/* スマホ幅: 2列でもまだ窮屈なので1列に落とし、ノブや鍵盤も少し小さくする */
+@media (max-width: 560px) {
+  .app { padding: 0 10px 14px; }
+  #signalRack { grid-template-columns: 1fr; }
+  .param { width: 56px; }
+  .knob { width: 46px; height: 46px; }
+  .scopes canvas { height: 56px; }
+  #kb { height: 92px; }
+  .lesson-cards { grid-template-columns: 1fr; }
+  .quiz-choices { grid-template-columns: 1fr; }
+  #readout { flex-direction: column; gap: 6px; }
+  #readout .ro-badge { align-self: flex-start; }
 }
