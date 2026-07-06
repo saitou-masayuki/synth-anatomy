@@ -185,6 +185,11 @@ body.assign-mode button.assign-btn { background: var(--mod-line); color: var(--b
 body.simple [data-adv="1"] { display: none; }
 /* ただし変調が刺さっているノブは表示する（変調線の行き先が消えると学習にならない） */
 body.simple .param[data-adv="1"].has-mod { display: flex; }
+/* 音作りテストの現在のステップが要求するノブも同様に表示する（オクターブ等） */
+body.simple .param[data-adv="1"].lesson-required { display: flex; }
+
+/* お手本試聴中はノブ操作をロックする（エンジンのパッチが一時的にお手本に差し替わるため） */
+body.audition-lock #signalRack, body.audition-lock #modRack { pointer-events: none; opacity: 0.55; }
 
 /* ---- レッスンパネル（つくる/きく） ---- */
 .nav-tabs button { font-weight: 600; padding: 6px 16px; }
@@ -220,8 +225,12 @@ body.simple .param[data-adv="1"].has-mod { display: flex; }
 .lesson-done { text-align: center; padding: 14px 0; }
 .lesson-done .ld-title { font-size: 16px; font-weight: 700; color: var(--ok); margin-bottom: 6px; }
 
-/* きく（クイズ）モード中はノブ操作をロックする（A/Bの音を保つため。スコープは動き続ける） */
-body.quiz-lock #signalRack, body.quiz-lock #modRack { pointer-events: none; opacity: 0.55; }
+/* きく（クイズ）モード中はノブ操作をロックする（A/Bの音を保つため。スコープは動き続ける）。
+   プリセット操作も出題中の音を壊してしまうため同様にロックする */
+body.quiz-lock #signalRack, body.quiz-lock #modRack,
+body.quiz-lock #presetSelect, body.quiz-lock #presetSave, body.quiz-lock #presetInit {
+  pointer-events: none; opacity: 0.55;
+}
 .quiz-status { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
 .quiz-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .quiz-actions button.ab { font-size: 14px; font-weight: 700; padding: 12px 22px; }

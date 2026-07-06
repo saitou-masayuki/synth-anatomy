@@ -24,7 +24,9 @@ var QUIZ_LEVELS = [
   },
   {
     id: 'lv3', name: 'レベル3', desc: '小さな変化・WT位置やLFOの速さも（4択）',
-    pool: ['filter.cutoff', 'filter.reso', 'ampEnv.attack', 'ampEnv.release', 'oscA.wave', 'oscA.wtPos', 'lfo1.rateHz', 'oscA.fine'],
+    // oscA.waveは出題対象に含めない: ベースがwt.basicのため、waveを別の波形に変えるのと
+    // wtPosをその波形に対応する位置へ動かすのが音として区別できない（同じ単一フレームになる）
+    pool: ['filter.cutoff', 'filter.reso', 'ampEnv.attack', 'ampEnv.release', 'oscA.wtPos', 'lfo1.rateHz', 'oscA.fine'],
     delta: 0.18, deltaRange: null,
     choices: 4,
     basePatches: ['qz-wt-wobble'],

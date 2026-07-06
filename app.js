@@ -28,7 +28,11 @@ let saveTimer = null;
 function saveSettings() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    settings.patch = SynthEngine.getPatch();
+    // きくモード中や試聴（お手本/A・B）の一時パッチは「自分の音」ではないため保存しない。
+    // 保存すると、リロード時に作りかけの音がクイズ用パッチ等で上書きされてしまう
+    if (lesson.view !== 'ear' && !SynthEngine.auditioning) {
+      settings.patch = SynthEngine.getPatch();
+    }
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
   }, 300);
 }
@@ -631,6 +635,7 @@ function applyPreset(patch) {
   updateModRing();      // has-mod（非表示ノブの強制表示）を反映してから
   Viz.updateGeometry(); // 配線ジオメトリを計算する
   saveSettings();
+  lessonOnParamChange(); // レシピ進行中にプリセットを読み込んだ場合、ステップ表示を実態に合わせ直す
 }
 
 function setupPresets() {
@@ -694,12 +699,28 @@ function refreshAfterPatchApply() {
   Viz.updateGeometry();
 }
 
+// 発展的パラメーターのうち、現在のレシピステップで要求されているものは
+// 「かんたん表示」でも表示する（has-modと同じ仕組み）。作業中でなければ全て解除する
+function markLessonRequiredParams(ids) {
+  const idSet = new Set(ids || []);
+  for (const [pid, k] of knobEls) {
+    k.wrap.classList.toggle('lesson-required', idSet.has(pid));
+  }
+}
+
+// 試聴（お手本/A・B）を中断し、UIロックも解除する
+function stopAudition() {
+  SynthEngine.stopPhrase();
+  document.body.classList.remove('audition-lock');
+}
+
 // ---- モード切替 ----
 
 function applyView(view) {
   const prev = lesson.view;
   if (prev === view) return;
-  SynthEngine.stopPhrase();
+  stopAudition();
+  if (prev === 'make') markLessonRequiredParams([]);
   exitAssignMode();
   // きくモードを離れるときは、入る前に作っていた音を復元する
   if (prev === 'ear' && lesson.sandboxPatch) {
@@ -735,6 +756,7 @@ function renderLesson() {
 
 function renderMake(body) {
   if (!lesson.recipe) {
+    markLessonRequiredParams([]);
     const head = el('div', 'lesson-head');
     head.appendChild(el('h2', null, '音作りテスト'));
     head.appendChild(el('span', 'goal', 'お手本の音を聴いて、手順どおりにノブを動かして再現します。できた音はそのまま使えます。'));
@@ -764,19 +786,29 @@ function renderMake(body) {
   const actions = el('div', 'lesson-actions');
   const btnTarget = el('button', 'primary', 'お手本の音を聴く');
   btnTarget.type = 'button';
-  btnTarget.addEventListener('click', () => SynthEngine.playPhrase(r.audition, { patch: targetFull }));
+  btnTarget.addEventListener('click', () => {
+    // 再生中はエンジンのパッチがお手本に一時差し替わるため、ノブ操作をロックする。
+    // ロックせずに触ると、レシピの達成判定がお手本パッチ基準で誤発火する
+    stopAudition();
+    document.body.classList.add('audition-lock');
+    SynthEngine.playPhrase(r.audition, {
+      patch: targetFull,
+      onDone: () => document.body.classList.remove('audition-lock'),
+    });
+  });
   const btnCurrent = el('button', null, 'いまの音を聴く');
   btnCurrent.type = 'button';
-  btnCurrent.addEventListener('click', () => SynthEngine.playPhrase(r.audition));
+  btnCurrent.addEventListener('click', () => { stopAudition(); SynthEngine.playPhrase(r.audition); });
   const btnBack = el('button', null, 'テスト一覧へ戻る');
   btnBack.type = 'button';
-  btnBack.addEventListener('click', () => { lesson.recipe = null; renderLesson(); });
+  btnBack.addEventListener('click', () => { stopAudition(); lesson.recipe = null; renderLesson(); });
   actions.appendChild(btnTarget);
   actions.appendChild(btnCurrent);
   actions.appendChild(btnBack);
   body.appendChild(actions);
 
   if (lesson.stepIdx >= r.steps.length) {
+    markLessonRequiredParams([]);
     settings.recipesDone[r.id] = true;
     saveSettings();
     const done = el('div', 'lesson-done');
@@ -807,9 +839,12 @@ function renderMake(body) {
     list.appendChild(card);
   });
   body.appendChild(list);
+  // 現在のステップが要求するノブは、かんたん表示でも隠さない（オクターブ等の発展パラメーター対策）
+  markLessonRequiredParams(Object.keys(r.steps[lesson.stepIdx].params));
 }
 
 function startRecipe(r) {
+  stopAudition();
   SynthEngine.applyPatch(Object.assign(defaultPatch(), r.init));
   refreshAfterPatchApply();
   lesson.recipe = r;
@@ -891,16 +926,16 @@ function renderEar(body) {
   const ab = el('div', 'quiz-actions');
   const btnA = el('button', 'ab', 'Aの音（もと）');
   btnA.type = 'button';
+  // 回答前はノブの見た目を更新しない（値が動いて見えると聴かずに正解できてしまうため）。
+  // 音だけをA/Bで切り替える
   btnA.addEventListener('click', () => {
     SynthEngine.applyPatch(q.base);
-    refreshAllVisuals();
     SynthEngine.playPhrase(QUIZ_BASE_PATCHES[q.baseId].audition);
   });
   const btnB = el('button', 'ab', 'Bの音（どこかが変わった）');
   btnB.type = 'button';
   btnB.addEventListener('click', () => {
     SynthEngine.applyPatch(Object.assign({}, q.base, { [q.target]: q.after }));
-    refreshAllVisuals();
     SynthEngine.playPhrase(QUIZ_BASE_PATCHES[q.baseId].audition);
   });
   ab.appendChild(btnA);
@@ -930,11 +965,13 @@ function startQuiz(level) {
 }
 
 function nextQuizQuestion() {
+  stopAudition();
   const quiz = lesson.quiz;
   quiz.q = quizGenQuestion(quiz.level, QUIZ_BASE_PATCHES, Math.random, settings.quizStats);
   quiz.answered = false;
   SynthEngine.applyPatch(quiz.q.base);
-  refreshAllVisuals();
+  // ここではノブ表示を更新しない（回答前に見た目で答えが分かってしまうため）。
+  // 正解発表時に answerQuiz() が改めて表示を同期させる
   renderLesson();
 }
 
@@ -951,6 +988,10 @@ function answerQuiz(choice, choicesEl) {
   settings.quizStats[q.target] = s;
   if (correct) quiz.score += 1;
   saveSettings();
+
+  // 回答後は初めて実際の状態（値・配線）を見せる。正解のノブがどこにあったか確認できる
+  SynthEngine.applyPatch(Object.assign({}, q.base, { [q.target]: q.after }));
+  refreshAfterPatchApply();
 
   for (const btn of choicesEl.querySelectorAll('button')) {
     if (btn.dataset.choice === q.target) btn.classList.add('correct');

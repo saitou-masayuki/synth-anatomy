@@ -414,12 +414,25 @@ var SynthEngine = (() => {
 
   let phraseTimers = [];
   let phraseNotes = new Set();
+  let restorePatch = null; // 一時差し替え前のパッチ。中断時に必ず復元するため、タイマーとは別に保持する
+
+  // 再生中の一時パッチ差し替えが有効かどうか（UIロックの判定に使う）
+  function auditioning() {
+    return restorePatch !== null;
+  }
 
   function stopPhrase() {
     for (const t of phraseTimers) clearTimeout(t);
     phraseTimers = [];
     for (const n of phraseNotes) noteOff(n);
     phraseNotes.clear();
+    // 保留中の一時パッチがあれば、途中で打ち切られても必ずここで復元する。
+    // タイマーだけに任せると、再生中に別の操作で中断されたとき復元処理ごと消えてしまい、
+    // 作業中の音がお手本パッチのまま固定されてしまう
+    if (restorePatch) {
+      applyPatch(restorePatch);
+      restorePatch = null;
+    }
   }
 
   // audition: { notes: MIDIノート番号列, dur: 1音の長さ秒 }
@@ -428,8 +441,10 @@ var SynthEngine = (() => {
     if (!ensureAudio()) return;
     stopPhrase();
     const o = opts || {};
-    const restore = o.patch ? getPatch() : null;
-    if (o.patch) applyPatch(o.patch);
+    if (o.patch) {
+      restorePatch = getPatch();
+      applyPatch(o.patch);
+    }
     const dur = audition.dur;
     const gap = 0.08;
     audition.notes.forEach((note, i) => {
@@ -440,7 +455,7 @@ var SynthEngine = (() => {
     const tail = Math.min(2, (o.patch || patch)['ampEnv.release'] || 0.3);
     const total = (audition.notes.length * (dur + gap) + tail) * 1000 + 60;
     phraseTimers.push(setTimeout(() => {
-      if (restore) applyPatch(restore);
+      if (restorePatch) { applyPatch(restorePatch); restorePatch = null; }
       if (o.onDone) o.onDone();
     }, total));
     return total;
@@ -508,6 +523,7 @@ var SynthEngine = (() => {
     noteOff,
     playPhrase,
     stopPhrase,
+    get auditioning() { return auditioning(); },
     applyParam,
     applyPatch,
     getPatch,
