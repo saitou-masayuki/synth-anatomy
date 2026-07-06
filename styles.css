@@ -32,7 +32,13 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif;
   min-height: 100vh; display: flex; justify-content: center;
 }
-.app { width: 100%; max-width: 1280px; padding: 0 20px 20px; display: flex; flex-direction: column; }
+.app {
+  width: 100%; max-width: 1280px; display: flex; flex-direction: column;
+  /* viewport-fit=cover で背景を画面端まで広げているため、ノッチ・ステータスバー・
+     ホームインジケーターの分だけ内側に余白を入れる（notched iPhoneでの重なり対策） */
+  padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+           max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
 
 /* ---- ヘッダー ---- */
 .bar {
@@ -263,7 +269,11 @@ footer .lg-mod { color: var(--mod-line); }
 
 /* スマホ幅: 2列でもまだ窮屈なので1列に落とし、ノブや鍵盤も少し小さくする */
 @media (max-width: 560px) {
-  .app { padding: 0 10px 14px; }
+  /* ここでも安全領域の余白は保つ（このルールが後勝ちでノッチ対策を打ち消していた） */
+  .app {
+    padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+             max(14px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
   #signalRack { grid-template-columns: 1fr; }
   .param { width: 56px; }
   .knob { width: 46px; height: 46px; }
