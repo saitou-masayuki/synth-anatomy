@@ -51,6 +51,9 @@ const BLOCK_CONTAINERS = {
 const HIDDEN_PARAMS = new Set(['mod1.src', 'mod1.dst']);
 
 const knobEls = new Map(); // paramId → { wrap, svg, valueArc, pointer, modRing, modDot, valueText, zeroNorm }
+// 現在ドラッグ中のノブの終了処理。ウィンドウのフォーカス喪失時（Cmd+Tab等）に
+// pointerup/pointercancelが届かず、ドラッグ状態やスコープ強調が残留するのを防ぐ
+const activeKnobDrags = new Set();
 
 function angleOf(norm) { return -135 + norm * 270; }
 function polar(r, angleDeg) {
@@ -221,6 +224,7 @@ function attachKnobEvents(knob, def) {
     curNorm = normParam(def.id, startValue);
     Viz.snapshotGhosts();
     Viz.setScopeActive(def.block, true); // 触っている間、対応するスコープの枠を強調する
+    activeKnobDrags.add(endDrag); // ウィンドウのフォーカス喪失時に強制終了できるよう登録する
     try { knob.setPointerCapture(e.pointerId); } catch {} // 環境により失敗し得るが、ドラッグ自体は続行できる
     e.preventDefault();
   });
@@ -242,6 +246,7 @@ function attachKnobEvents(knob, def) {
   const endDrag = () => {
     if (!dragging) return;
     dragging = false;
+    activeKnobDrags.delete(endDrag);
     bubble.hidden = true;
     Viz.releaseGhosts();
     Viz.setScopeActive(def.block, false);
@@ -578,12 +583,15 @@ function setupKeyboardInput() {
     pcHeld.delete(e.code);
     noteOff(note);
   });
-  // フォーカス喪失時は押鍵をすべて解放（Cmd+Tab後の鳴り残り対策）
+  // フォーカス喪失時は押鍵をすべて解放（Cmd+Tab後の鳴り残り対策）。
+  // ドラッグ中のノブも同様に強制終了する（pointerup/pointercancelが届かないまま
+  // dragging状態やスコープの強調表示が残留するのを防ぐ）
   window.addEventListener('blur', () => {
     for (const [, note] of pcHeld) noteOff(note);
     pcHeld.clear();
     for (const [, note] of pointerHeld) noteOff(note);
     pointerHeld.clear();
+    for (const endDrag of [...activeKnobDrags]) endDrag();
   });
 }
 
@@ -707,7 +715,10 @@ function updateNavProgress() {
 // 初回だけ「つくる」への案内バナーを出す（閉じるか、レシピを1つでも完成したら出さない）
 function updateIntroBanner() {
   const anyDone = RECIPES.some((r) => settings.recipesDone[r.id]);
+  const wasHidden = $('introBanner').hidden;
   $('introBanner').hidden = !(lesson.view === 'play' && !settings.introSeen && !anyDone);
+  // 表示状態が変わった＝レイアウトの高さが変わったので、オーバーレイの配線座標を計算し直す
+  if (wasHidden !== $('introBanner').hidden) Viz.updateGeometry();
 }
 
 function paramLabel(id) {
@@ -776,6 +787,9 @@ function applyView(view) {
   updateIntroBanner();
   $('lessonPanel').hidden = view === 'play';
   renderLesson();
+  // バナー・レッスンパネルの表示切替でsignalRack/modRackの縦位置がずれるため、
+  // オーバーレイの配線座標（ENV1→AMP線・LFOモジュレーション線）を計算し直す
+  Viz.updateGeometry();
 }
 
 function renderLesson() {
@@ -1052,6 +1066,13 @@ function answerQuiz(choice, choicesEl) {
   if (correct) s.correct += 1;
   settings.quizStats[q.target] = s;
   if (correct) quiz.score += 1;
+  if (quiz.qIdx + 1 >= quiz.level.questionCount) {
+    // 最終問題は回答した瞬間に合否・自己ベストを確定する。「結果を見る」ボタンを
+    // 押さずに別モードへ切り替えても、達成した記録がここで失われないようにする
+    const best = settings.quizBest[quiz.level.id];
+    if (best === undefined || quiz.score > best) settings.quizBest[quiz.level.id] = quiz.score;
+    updateNavProgress();
+  }
   saveSettings();
 
   // 回答後は初めて実際の状態（値・配線）を見せる。正解のノブがどこにあったか確認できる
@@ -1073,10 +1094,7 @@ function answerQuiz(choice, choicesEl) {
   next.addEventListener('click', () => {
     quiz.qIdx += 1;
     if (quiz.qIdx >= quiz.level.questionCount) {
-      const best = settings.quizBest[quiz.level.id];
-      if (best === undefined || quiz.score > best) settings.quizBest[quiz.level.id] = quiz.score;
-      saveSettings();
-      updateNavProgress();
+      // 合否・自己ベストは既にanswerQuiz()側で確定済み。ここでは結果画面への遷移のみ行う
       renderLesson();
     } else {
       nextQuizQuestion();

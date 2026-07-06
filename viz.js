@@ -394,10 +394,17 @@ var Viz = (() => {
   }
 
   // ドラッグ中の「触っているノブ → 変化するスコープ」の対応を枠の強調で示す
+  // ブロックごとの参照カウント。同じブロック内の2つのノブをマルチタッチで同時に
+  // ドラッグしている場合、片方の指を離しても強調表示が消えないようにする
+  const scopeActiveCount = {};
+
   function setScopeActive(block, on) {
+    const n = (scopeActiveCount[block] || 0) + (on ? 1 : -1);
+    scopeActiveCount[block] = Math.max(0, n);
+    const active = scopeActiveCount[block] > 0;
     for (const id of SCOPE_MAP[block] || []) {
       const el = document.getElementById(id);
-      if (el) el.classList.toggle('active', on);
+      if (el) el.classList.toggle('active', active);
     }
   }
 
