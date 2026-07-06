@@ -170,6 +170,7 @@ body.assign-mode button.assign-btn { background: var(--mod-line); color: var(--b
 #kb .bk { fill: var(--black-key); stroke: var(--key-stroke); stroke-width: 1; cursor: pointer; }
 #kb .wk.on { fill: var(--key-active); }
 #kb .bk.on { fill: var(--accent-soft); }
+#kb text { pointer-events: none; } /* C音名ラベルが鍵タップのデッドゾーンにならないように */
 .kb-hint { font-size: 10px; color: var(--text-faint); text-align: center; margin-top: 4px; }
 
 /* ---- SVGオーバーレイの線 ---- */
@@ -181,6 +182,8 @@ body.assign-mode button.assign-btn { background: var(--mod-line); color: var(--b
 
 /* ---- シンプルモード: 発展的なノブの中身だけ隠す（ブロックの枠は常に見せる） ---- */
 body.simple [data-adv="1"] { display: none; }
+/* ただし変調が刺さっているノブは表示する（変調線の行き先が消えると学習にならない） */
+body.simple .param[data-adv="1"].has-mod { display: flex; }
 
 /* ---- フッター ---- */
 footer { font-size: 10.5px; color: var(--text-faint); padding: 6px 4px 0; display: flex; gap: 18px; flex-wrap: wrap; }

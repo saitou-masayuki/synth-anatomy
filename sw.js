@@ -3,10 +3,10 @@
 // オフライン時だけキャッシュから返す。古いバージョンが残り続ける罠を避ける方針。
 const CACHE = 'synth-anatomy-v1';
 const PRECACHE = [
-  './', './styles.css',
+  './', './index.html', './styles.css',
   './content-params.js', './wavetables.js', './mod-engine.js', './describe-engine.js',
   './synth-engine.js', './viz.js', './app.js',
-  './manifest.webmanifest', './icon-192.png', './icon-512.png',
+  './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-512-maskable.png',
 ];
 
 self.addEventListener('install', (e) => {

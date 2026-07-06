@@ -14,8 +14,8 @@ var SynthEngine = (() => {
   let nodes = null;        // 音声ノード一式（初期化後に有効）
   let pwCache = [];        // フレーム番号 → PeriodicWave のキャッシュ
   let curLo = -1, curHi = -1; // 現在オシレーターに載っているフレーム番号
-  let modNodes = [];       // アクティブな変調用depthGain（配線し直しで破棄）
-  let controlRoutes = [];  // control-rate（wtPos等）のルート
+  let modNodes = [];       // アクティブな変調 { dg, route }（配線し直しで破棄）
+  let driveTimer = null;   // S&H・wtPos変調の音側駆動タイマー（rAF停止中も動く）
   let patch = defaultPatch();
   let noteStack = [];
   let currentNote = null;
@@ -61,9 +61,12 @@ var SynthEngine = (() => {
     const n = {};
     n.oscLo = ctx.createOscillator();
     n.oscHi = ctx.createOscillator();
+    n.oscLo.detune.value = patch['oscA.fine'];
+    n.oscHi.detune.value = patch['oscA.fine'];
     n.gLo = ctx.createGain();
     n.gHi = ctx.createGain();
     n.oscMix = ctx.createGain();
+    n.trem = ctx.createGain(); // レベル変調用（基準1。1+amt×LFOで0〜2に収まり位相反転しない）
     n.tapOsc = makeAnalyser();
     n.filter = ctx.createBiquadFilter();
     n.tapFilter = makeAnalyser();
@@ -91,8 +94,9 @@ var SynthEngine = (() => {
 
     n.oscLo.connect(n.gLo).connect(n.oscMix);
     n.oscHi.connect(n.gHi).connect(n.oscMix);
-    n.oscMix.connect(n.tapOsc);
-    n.oscMix.connect(n.filter);
+    n.oscMix.connect(n.trem);
+    n.trem.connect(n.tapOsc);
+    n.trem.connect(n.filter);
     n.filter.connect(n.tapFilter);
     n.filter.connect(n.ampGain);
     n.ampGain.connect(n.tapAmp);
@@ -104,12 +108,14 @@ var SynthEngine = (() => {
 
     n.ampGain.gain.value = 0;
     n.oscMix.gain.value = patch['oscA.level'];
+    n.trem.gain.value = 1;
     n.masterGain.gain.value = patch['master.gain'];
 
     // LFO1: 通常波形はOscillatorNode（±1のオーディオレート）、S&HはConstantSourceを
-    // controlTick()（60Hzミラー）で更新する
+    // audioDriveTick()（タイマー駆動ミラー）で更新する
     n.lfoOsc = ctx.createOscillator();
     n.lfoOsc.frequency.value = patch['lfo1.rateHz'];
+    n.lfoOsc.type = LFO_OSC_TYPE[patch['lfo1.shape']] || 'sine';
     n.shSrc = ctx.createConstantSource();
     n.shSrc.offset.value = 0;
 
@@ -123,6 +129,9 @@ var SynthEngine = (() => {
     applyWave(patch['oscA.wave'], true);
     applyFilter();
     applyModRouting();
+    // S&H・wtPos変調は音そのものを駆動するため、可視化のrAF（非表示タブで停止）とは
+    // 独立したタイマーで回す。バックグラウンドではブラウザーに間引かれるが凍結はしない
+    if (driveTimer === null) driveTimer = setInterval(audioDriveTick, 33);
   }
 
   // ---- パラメーター適用 ----
@@ -154,17 +163,24 @@ var SynthEngine = (() => {
   function applyWtPos(pos, immediate) {
     const table = WAVETABLES['wt.basic'];
     const { lo, hi, mix } = wtFrameMix(pos, table.frames.length);
-    if (lo !== curLo) { nodes.oscLo.setPeriodicWave(getPW(lo)); curLo = lo; }
-    if (hi !== curHi) { nodes.oscHi.setPeriodicWave(getPW(hi)); curHi = hi; }
+    // フレームをパリティで振り分ける（偶数フレーム=oscLo、奇数フレーム=oscHi）。
+    // 境界をまたぐとき波形を差し替えるのは常にゲイン0側のオシレーターになり、
+    // 鳴っている側のsetPeriodicWaveによるクリック・誤った音色遷移が出ない
+    const loIsEven = lo % 2 === 0;
+    const evenFrame = loIsEven ? lo : hi;
+    const oddFrame = loIsEven ? hi : lo;
     // 等パワークロスフェード（中間位置で音量が凹まない）
-    const gLo = Math.cos(mix * Math.PI / 2);
-    const gHi = Math.sin(mix * Math.PI / 2);
+    const gEven = loIsEven ? Math.cos(mix * Math.PI / 2) : Math.sin(mix * Math.PI / 2);
+    const gOdd = loIsEven ? Math.sin(mix * Math.PI / 2) : Math.cos(mix * Math.PI / 2);
+    if (evenFrame !== curLo) { nodes.oscLo.setPeriodicWave(getPW(evenFrame)); curLo = evenFrame; }
+    if (oddFrame !== curHi) { nodes.oscHi.setPeriodicWave(getPW(oddFrame)); curHi = oddFrame; }
+    const smoothing = paramById('oscA.wtPos').smoothing;
     if (immediate) {
-      nodes.gLo.gain.value = gLo;
-      nodes.gHi.gain.value = gHi;
+      nodes.gLo.gain.value = gEven;
+      nodes.gHi.gain.value = gOdd;
     } else {
-      smoothSet(nodes.gLo.gain, gLo, 0.015);
-      smoothSet(nodes.gHi.gain, gHi, 0.015);
+      smoothSet(nodes.gLo.gain, gEven, smoothing);
+      smoothSet(nodes.gHi.gain, gOdd, smoothing);
     }
   }
 
@@ -187,15 +203,17 @@ var SynthEngine = (() => {
 
   // モジュレーション配線の全再構築（スロット変更・LFO波形変更時）
   function applyModRouting() {
-    for (const g of modNodes) { try { g.disconnect(); } catch {} }
+    // depthGainの出力だけでなく、変調元→depthGainの入力側も切断する
+    // （出力だけ切ると旧GainNodeが変調元に保持され続けてリークする）
+    for (const m of modNodes) { try { m.dg.disconnect(); } catch {} }
+    if (nodes) {
+      try { nodes.lfoOsc.disconnect(); } catch {}
+      try { nodes.shSrc.disconnect(); } catch {}
+    }
     modNodes = [];
-    controlRoutes = [];
     const src = lfoSourceNode();
     for (const route of resolveModRoutes(patch)) {
-      if (route.kind === 'control') {
-        controlRoutes.push(route);
-        continue;
-      }
+      if (route.kind === 'control') continue; // wtPos等はaudioDriveTickが毎tick解決する
       const dg = ctx.createGain();
       dg.gain.value = route.amt * route.range;
       src.connect(dg);
@@ -205,9 +223,10 @@ var SynthEngine = (() => {
         dg.connect(nodes.oscLo.detune);
         dg.connect(nodes.oscHi.detune);
       } else if (route.dst === 'oscA.level') {
-        dg.connect(nodes.oscMix.gain);
+        // 基準1のトレモロノードに加算（1+amt×LFO ∈ [0,2]。負ゲイン=位相反転を防ぐ）
+        dg.connect(nodes.trem.gain);
       }
-      modNodes.push(dg);
+      modNodes.push({ dg, route: Object.assign({}, route) });
     }
   }
 
@@ -226,10 +245,19 @@ var SynthEngine = (() => {
     return envValue(currentAdsr(), t - noteOnAt, noteOffAt === null ? null : t - noteOffAt);
   }
 
-  function setPitch(note) {
+  // glide=true（発音中の音程移動）のときだけ短い平滑化をかける。
+  // 無音からの新規ノートまで平滑化すると立ち上がりにピッチスイープ（チャープ）が乗るため
+  function setPitch(note, glide) {
     const freq = midiToFreq(note + patch['oscA.octave'] * 12 + patch['oscA.semi']);
-    smoothSet(nodes.oscLo.frequency, freq, 0.005);
-    smoothSet(nodes.oscHi.frequency, freq, 0.005);
+    const t = ctx.currentTime;
+    for (const o of [nodes.oscLo, nodes.oscHi]) {
+      if (glide) {
+        o.frequency.setTargetAtTime(freq, t, 0.005);
+      } else {
+        o.frequency.cancelScheduledValues(t);
+        o.frequency.setValueAtTime(freq, t);
+      }
+    }
     currentNote = note;
   }
 
@@ -238,10 +266,10 @@ var SynthEngine = (() => {
   function noteOn(note) {
     if (!ensureAudio()) return;
     noteStack = noteStackPush(noteStack, note);
-    setPitch(note);
     const t = ctx.currentTime;
     const adsr = currentAdsr();
     const cur = currentEnvValue(t);
+    setPitch(note, cur > 0.01);
     // リトリガー: 現在値からアタックを再開する。ミラー（envValue）と一致させるため、
     // ノートオン時刻を「現在値ぶんアタックが進んだ過去」に補正する
     noteOnAt = t - cur * adsr.attack;
@@ -260,7 +288,7 @@ var SynthEngine = (() => {
     noteStack = noteStackRemove(noteStack, note);
     if (noteStack.length > 0) {
       // 後着優先: 残っている一番新しい鍵にレガートで戻る（エンベロープは継続）
-      if (note === currentNote) setPitch(noteStack[noteStack.length - 1]);
+      if (note === currentNote) setPitch(noteStack[noteStack.length - 1], true);
       return;
     }
     const t = ctx.currentTime;
@@ -276,19 +304,21 @@ var SynthEngine = (() => {
     const def = paramById(id);
     if (!def) return;
     value = def.type === 'float' || def.type === 'int' ? clampParam(id, value) : value;
+    const prev = patch[id];
     patch[id] = value;
-    if (!nodes) return; // 初期化前はパッチにだけ反映（初期化時にまとめて適用される）
+    if (!nodes) return; // 初期化前はパッチにだけ反映（buildGraphがまとめて適用する）
     switch (id) {
       case 'oscA.wave': applyWave(value); break;
       case 'oscA.wtPos':
-        if (patch['oscA.wave'] === 'wt.basic' && controlRoutes.length === 0) applyWtPos(value);
-        break; // 変調中はcontrolTickが実効値で更新する
+        // 変調中はaudioDriveTickが実効値で更新するため、手動値の直接適用はしない
+        if (patch['oscA.wave'] === 'wt.basic' && !wtPosModRoute()) applyWtPos(value);
+        break;
       case 'oscA.octave':
       case 'oscA.semi':
-        if (currentNote !== null) setPitch(currentNote);
+        if (currentNote !== null) setPitch(currentNote, true);
         break;
-      case 'oscA.fine': smoothSet(nodes.oscLo.detune, value, 0.01); smoothSet(nodes.oscHi.detune, value, 0.01); break;
-      case 'oscA.level': smoothSet(nodes.oscMix.gain, value, 0.01); break;
+      case 'oscA.fine': smoothSet(nodes.oscLo.detune, value, def.smoothing); smoothSet(nodes.oscHi.detune, value, def.smoothing); break;
+      case 'oscA.level': smoothSet(nodes.oscMix.gain, value, def.smoothing); break;
       case 'filter.type':
       case 'filter.cutoff':
       case 'filter.reso': applyFilter(); break;
@@ -298,20 +328,86 @@ var SynthEngine = (() => {
         break;
       }
       case 'lfo1.rateHz': {
-        // 位相アキュムレーターを現在位相で切り直してから周波数を変える
-        // （OscillatorNodeの位相連続性とミラー計算を一致させる）
+        // 「旧レート」で現在位相を確定してからアンカーを切り直す（patchは既に新値のため
+        // mirrorLfoPhase()は使えない）。周波数は即時切替にして、OscillatorNodeの位相
+        // 連続性とミラー計算を厳密に一致させる（平滑化すると収束期間ぶんの位相差が残留する）
         const t = ctx.currentTime;
-        lfoPhase.phase0 = mirrorLfoPhase(t);
+        lfoPhase.phase0 = lfoPhase.phase0 + (t - lfoPhase.tRef) * prev;
         lfoPhase.tRef = t;
-        smoothSet(nodes.lfoOsc.frequency, value, 0.02);
+        nodes.lfoOsc.frequency.cancelScheduledValues(t);
+        nodes.lfoOsc.frequency.setValueAtTime(value, t);
+        break;
+      }
+      case 'mod1.amt': {
+        // 配線構造が変わらない深さ変更は、既存depthGainを平滑更新する
+        // （全再構築＋直代入では定義済みsmoothingが効かずジッパーノイズが出る）
+        const m = modNodes.find((x) => x.route.slot === 'mod1');
+        if (m) {
+          m.route.amt = value;
+          smoothSet(m.dg.gain, value * m.route.range, def.smoothing);
+        } else {
+          applyModRouting();
+        }
         break;
       }
       case 'mod1.src':
-      case 'mod1.dst':
-      case 'mod1.amt': applyModRouting(); break;
-      case 'master.gain': smoothSet(nodes.masterGain.gain, value, 0.02); break;
-      // ampEnv.* は次のノートイベントから効く（保持値のみ更新）
+      case 'mod1.dst': applyModRouting(); break;
+      case 'master.gain': smoothSet(nodes.masterGain.gain, value, def.smoothing); break;
+      case 'ampEnv.attack':
+      case 'ampEnv.decay':
+      case 'ampEnv.sustain':
+      case 'ampEnv.release':
+        // 発音中に変えた場合は現在値から新ADSRで組み直す。旧スケジュールを放置すると
+        // ミラー（新ADSRで即計算）と実音が乖離し、離鍵時のsetValueAtTimeで音量が跳ぶ
+        rescheduleEnvelope(id.split('.')[1], prev);
+        break;
     }
+  }
+
+  // 発音中のADSR変更を、実音とミラーの連続性を保ったまま反映する。
+  // 実音は「現在値から新ADSRの目標へ」再スケジュールし、ミラー側は noteOnAt/noteOffAt を
+  // 逆算し直して同じ軌道を描かせる（envValueの式を現在値について解く）
+  function rescheduleEnvelope(field, prevValue) {
+    if (noteOnAt === null) return;
+    const t = ctx.currentTime;
+    const adsr = currentAdsr();
+    const oldAdsr = Object.assign({}, adsr, { [field]: prevValue });
+    const g = nodes.ampGain.gain;
+    if (noteOffAt === null) {
+      // 押鍵中: 旧ADSRでの現在値から、新しいサステインへ新ディケイで収束させる
+      const cur = envValue(oldAdsr, t - noteOnAt, null);
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(cur, t);
+      g.setTargetAtTime(adsr.sustain, t, adsr.decay / 3);
+      if (cur > adsr.sustain && adsr.sustain < 1) {
+        // ディケイ相の式 held = S + (1-S)·exp(-3(tOn-A)/D) を cur について解いて tOn を逆算
+        const tOn = adsr.attack - (adsr.decay / 3) * Math.log((cur - adsr.sustain) / (1 - adsr.sustain));
+        noteOnAt = t - tOn;
+      } else {
+        // 現在値がサステイン以下（サステインを引き上げた等）。実音はなだらかに上がるが、
+        // ミラーの押鍵中の式は下降しか表せないため「収束済み」とみなす（短い過渡期のみ僅かに乖離）
+        noteOnAt = t - adsr.attack - adsr.decay * 10;
+      }
+    } else if (field === 'release') {
+      // リリース中のリリース変更: 現在値を保ったまま新しい時定数で減衰し直す。
+      // heldAtRelease を固定し、tOff を新時定数で逆算して noteOnAt/noteOffAt を平行移動する
+      const tOn = t - noteOnAt, tOff = t - noteOffAt;
+      const held = envHeldValue(adsr, tOn - tOff);
+      const cur = envValue(Object.assign({}, adsr, { release: prevValue }), tOn, tOff);
+      if (held <= 0 || cur <= 0) return;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(cur, t);
+      g.setTargetAtTime(0, t, adsr.release / 3);
+      const tOffNew = (adsr.release / 3) * Math.log(held / cur);
+      const shift = tOffNew - tOff;
+      noteOffAt = t - tOffNew;
+      noteOnAt = noteOnAt - shift;
+    }
+  }
+
+  // wtPos宛のアクティブな変調ルート（control-rate）を返す
+  function wtPosModRoute() {
+    return resolveModRoutes(patch).find((r) => r.kind === 'control' && r.dst === 'oscA.wtPos') || null;
   }
 
   function applyPatch(dict) {
@@ -334,28 +430,38 @@ var SynthEngine = (() => {
     return ctx.currentTime - (ctx.outputLatency || ctx.baseLatency || 0);
   }
 
-  // 制御レートtick（viz.jsの単一rAFループから毎フレーム呼ばれる）。
-  // S&Hの音源更新・wtPos変調の適用を行い、可視化用のミラー値を返す
+  // 音側の変調駆動（buildGraph後は独立タイマーで常時動く。rAF停止中も凍結しない）。
+  // S&HのConstantSource更新とwtPos変調適用を ctx.currentTime 基準（=これから鳴る音）で行う
+  function audioDriveTick() {
+    if (!nodes) return;
+    const tNow = ctx.currentTime;
+    const lfoValNow = lfoValue(patch['lfo1.shape'], mirrorLfoPhase(tNow), 1);
+    if (patch['lfo1.shape'] === 'sh') {
+      nodes.shSrc.offset.setTargetAtTime(lfoValNow, tNow, 0.002);
+    }
+    const route = wtPosModRoute();
+    if (route && patch['oscA.wave'] === 'wt.basic') {
+      const eff = Math.min(1, Math.max(0, patch['oscA.wtPos'] + modContribution(route, lfoValNow)));
+      applyWtPos(eff);
+    }
+  }
+
+  // 可視化用ミラー（viz.jsの単一rAFループから毎フレーム呼ばれる。副作用なし）。
+  // 「聴こえている時刻」（出力遅延を引いた過去）で評価するため、線の脈動と音が一致する
   function controlTick() {
     if (!ctx) return null;
     const tAud = audibleTime();
-    const lfoVal = lfoValue(patch['lfo1.shape'], mirrorLfoPhase(tAud), 1);
-    if (patch['lfo1.shape'] === 'sh') {
-      // 音の実体側も同じミラー値で駆動する（ctx.currentTime基準で先行入力）
-      const nowVal = lfoValue('sh', mirrorLfoPhase(ctx.currentTime), 1);
-      nodes.shSrc.offset.setTargetAtTime(nowVal, ctx.currentTime, 0.002);
-    }
+    const lfoPhaseNow = mirrorLfoPhase(tAud);
+    const lfoVal = lfoValue(patch['lfo1.shape'], lfoPhaseNow, 1);
     let wtPosEffective = patch['oscA.wtPos'];
-    for (const route of controlRoutes) {
-      if (route.dst === 'oscA.wtPos') {
-        wtPosEffective = Math.min(1, Math.max(0, patch['oscA.wtPos'] + modContribution(route, lfoVal)));
-        if (patch['oscA.wave'] === 'wt.basic') applyWtPos(wtPosEffective);
-      }
+    const route = wtPosModRoute();
+    if (route) {
+      wtPosEffective = Math.min(1, Math.max(0, patch['oscA.wtPos'] + modContribution(route, lfoVal)));
     }
     const envT = noteOnAt === null ? null : tAud - noteOnAt;
     const envOffT = noteOffAt === null ? null : tAud - noteOffAt;
     const envVal = envT === null ? 0 : envValue(currentAdsr(), envT, envOffT);
-    return { lfoVal, envVal, envT, envOffT, wtPosEffective, routes: resolveModRoutes(patch) };
+    return { lfoVal, lfoPhase: lfoPhaseNow, envVal, envT, envOffT, wtPosEffective, routes: resolveModRoutes(patch) };
   }
 
   return {

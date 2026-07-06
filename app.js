@@ -14,6 +14,11 @@ try {
     if (s && s.v === 1) settings = Object.assign(settings, s);
   }
 } catch {}
+// 壊れたデータへの耐性: 型が崩れていたら既定値に戻す（Object.keys(null)等での初期化中断を防ぐ）
+if (!settings.presets || typeof settings.presets !== 'object' || Array.isArray(settings.presets)) settings.presets = {};
+if (settings.patch !== null && (typeof settings.patch !== 'object' || Array.isArray(settings.patch))) settings.patch = null;
+if (settings.theme !== 'light' && settings.theme !== 'dark') settings.theme = 'dark';
+if (settings.mode !== 'simple' && settings.mode !== 'full') settings.mode = 'simple';
 
 let saveTimer = null;
 function saveSettings() {
@@ -133,10 +138,9 @@ function setParam(id, value) {
   refreshParamVisual(id);
   if (id.startsWith('mod1.')) {
     renderAssigned();
-    Viz.updateGeometry();
-    updateModRing();
-  }
-  if (id === 'mod1.amt' || id === 'filter.cutoff' || id === 'oscA.wtPos' || id === 'oscA.level' || id === 'oscA.fine') {
+    updateModRing();          // has-modクラス（非表示ノブの強制表示）を先に反映してから
+    Viz.updateGeometry();     // 配線ジオメトリを計算する（非表示要素は座標が全て0になるため）
+  } else if (id === 'filter.cutoff' || id === 'oscA.wtPos' || id === 'oscA.level' || id === 'oscA.fine') {
     updateModRing();
   }
   saveSettings();
@@ -167,8 +171,10 @@ function refreshAllVisuals() {
 // ---------- ノブ操作（縦ドラッグ / Shift微調整 / ホイール / ダブルクリック初期値） ----------
 
 const bubble = $('bubble');
+let bubbleTimer = null;
 
 function showBubble(knobEl, text) {
+  clearTimeout(bubbleTimer); // ダブルクリック時の自動非表示タイマーがドラッグ中のバブルを消さないように
   const r = knobEl.getBoundingClientRect();
   bubble.hidden = false;
   bubble.innerHTML = text;
@@ -186,11 +192,12 @@ function throttledReadout(id, prev, next) {
 
 function attachKnobEvents(knob, def) {
   let dragging = false;
-  let startY = 0;
-  let startNorm = 0;
+  let lastY = 0;
+  let curNorm = 0;
   let startValue = 0;
 
   knob.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; // 右クリック等でドラッグ状態に入らない
     if (document.body.classList.contains('assign-mode')) {
       // 割当モード中: このノブを変調先として確定する
       if (knob.classList.contains('assignable')) assignTo(def.id);
@@ -198,10 +205,10 @@ function attachKnobEvents(knob, def) {
       return;
     }
     dragging = true;
-    startY = e.clientY;
+    lastY = e.clientY;
     const patch = SynthEngine.getPatch();
     startValue = patch[def.id];
-    startNorm = normParam(def.id, startValue);
+    curNorm = normParam(def.id, startValue);
     knob.setPointerCapture(e.pointerId);
     Viz.snapshotGhosts();
     e.preventDefault();
@@ -209,9 +216,12 @@ function attachKnobEvents(knob, def) {
 
   knob.addEventListener('pointermove', (e) => {
     if (!dragging) return;
+    // 移動量を毎イベント加算する増分方式。ドラッグ途中でShiftを押し引きしても
+    // 蓄積済み移動量が再解釈されず、値がジャンプしない
     const scale = e.shiftKey ? 1440 : 180; // Shiftで1/8精度
-    const norm = Math.min(1, Math.max(0, startNorm + (startY - e.clientY) / scale));
-    const v = denormParam(def.id, norm);
+    curNorm = Math.min(1, Math.max(0, curNorm + (lastY - e.clientY) / scale));
+    lastY = e.clientY;
+    const v = denormParam(def.id, curNorm);
     setParam(def.id, v);
     const cur = SynthEngine.getPatch()[def.id];
     showBubble(knob, `${fmtValue(def.id, startValue)}<span class="arrow">→</span>${fmtValue(def.id, cur)}`);
@@ -236,9 +246,14 @@ function attachKnobEvents(knob, def) {
     e.preventDefault();
     const patch = SynthEngine.getPatch();
     const prev = patch[def.id];
-    const norm = normParam(def.id, prev);
-    const step = (e.deltaY < 0 ? 1 : -1) / 50;
-    setParam(def.id, denormParam(def.id, Math.min(1, Math.max(0, norm + step))));
+    if (def.type === 'int') {
+      // 整数ノブは正規化1/50刻みだと丸めで元に戻ってしまうため、1ステップずつ動かす
+      setParam(def.id, prev + (e.deltaY < 0 ? 1 : -1));
+    } else {
+      const norm = normParam(def.id, prev);
+      const step = (e.deltaY < 0 ? 1 : -1) / 50;
+      setParam(def.id, denormParam(def.id, Math.min(1, Math.max(0, norm + step))));
+    }
     throttledReadout(def.id, prev, SynthEngine.getPatch()[def.id]);
   }, { passive: false });
 
@@ -246,7 +261,7 @@ function attachKnobEvents(knob, def) {
     const prev = SynthEngine.getPatch()[def.id];
     setParam(def.id, def.default);
     showBubble(knob, `${fmtValue(def.id, prev)}<span class="arrow">→</span>${fmtValue(def.id, def.default)}（初期値）`);
-    setTimeout(() => { bubble.hidden = true; }, 900);
+    bubbleTimer = setTimeout(() => { bubble.hidden = true; }, 900);
     updateReadout(def.id, prev, def.default);
   });
 }
@@ -295,13 +310,16 @@ function assignTo(knobParamId) {
   if (!dest) return;
   exitAssignMode();
   const patch = SynthEngine.getPatch();
-  const prevDst = patch['mod1.dst'];
   SynthEngine.applyParam('mod1.src', 'lfo1');
   if (!patch['mod1.amt']) SynthEngine.applyParam('mod1.amt', 0.5);
   setParam('mod1.dst', dest);
   refreshParamVisual('mod1.amt');
-  updateReadout('mod1.dst', prevDst, dest);
-  Viz.pulseScope('lfo1');
+  // 同じ変調先を選び直した場合もupdateReadoutのprev===next早期returnに阻まれないよう、
+  // 割当の完了は常に直接表示する（割当モードの案内文の残留防止）
+  const destDef = MOD_DESTS.find((d) => d.id === dest);
+  const d = describeChange('mod1.dst', 'none', dest, SynthEngine.getPatch());
+  $('roAction').textContent = `LFO1 を ${destDef ? destDef.name : dest} に配線しました`;
+  if (d) $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">👀 ${escapeHtml(d.watch)}</span>`;
 }
 
 function unassign() {
@@ -340,6 +358,7 @@ function updateModRing() {
   for (const k of knobEls.values()) {
     k.modRing.setAttribute('visibility', 'hidden');
     k.modDot.setAttribute('visibility', 'hidden');
+    k.wrap.classList.remove('has-mod');
   }
   activeModKnob = null;
   const patch = SynthEngine.getPatch();
@@ -348,6 +367,9 @@ function updateModRing() {
   const knobParamId = route.dst === 'oscA.pitch' ? 'oscA.fine' : route.dst;
   const k = knobEls.get(knobParamId);
   if (!k) return;
+  // シンプルモードで隠れる発展ノブでも、変調が刺さっている間は表示する
+  // （非表示のままだと変調線が座標0,0へ描かれ、揺れの確認もできないため）
+  k.wrap.classList.add('has-mod');
   const bounds = modRingBounds(route, patch);
   if (!bounds) return;
   k.modRing.setAttribute('d', arcPath(32, angleOf(bounds.lo), angleOf(bounds.hi)));
@@ -371,8 +393,9 @@ function modRingBounds(route, patch) {
     return { lo: normParam('oscA.wtPos', base - depth), hi: normParam('oscA.wtPos', base + depth) };
   }
   if (route.dst === 'oscA.level') {
+    // レベル変調は乗算型（実効値 = レベル × (1 + 深さ×LFO)）。エンジンのトレモロノードと同じ式
     const base = patch['oscA.level'];
-    return { lo: normParam('oscA.level', base - depth), hi: normParam('oscA.level', base + depth) };
+    return { lo: normParam('oscA.level', base * (1 - depth)), hi: normParam('oscA.level', base * (1 + depth)) };
   }
   if (route.dst === 'oscA.pitch') {
     const base = patch['oscA.fine'];
@@ -395,7 +418,7 @@ Viz.onMirror = (mirror) => {
   } else if (route.dst === 'oscA.wtPos') {
     norm = mirror.wtPosEffective;
   } else if (route.dst === 'oscA.level') {
-    norm = normParam('oscA.level', patch['oscA.level'] + contrib);
+    norm = normParam('oscA.level', patch['oscA.level'] * (1 + contrib));
   } else if (route.dst === 'oscA.pitch') {
     norm = normParam('oscA.fine', patch['oscA.fine'] + contrib);
   } else return;
@@ -450,22 +473,28 @@ function buildKeyboard() {
 
 // ---------- 発音（エンジン呼び出し＋鍵の点灯＋パイプ加速） ----------
 
-const litNotes = new Set();
+// 同じノートを複数の入力源（画面鍵盤の複数の指・PCキー）が同時に押せるため、
+// 参照カウントで管理し、最後の1つが離れたときだけエンジンに伝える
+const noteRefs = new Map();
 
 function noteOn(note) {
+  const n = (noteRefs.get(note) || 0) + 1;
+  noteRefs.set(note, n);
+  if (n > 1) return;
   SynthEngine.noteOn(note);
-  litNotes.add(note);
   const r = kbRects.get(note);
   if (r) r.classList.add('on');
   document.body.classList.add('playing');
 }
 
 function noteOff(note) {
+  const n = (noteRefs.get(note) || 0) - 1;
+  if (n > 0) { noteRefs.set(note, n); return; }
+  noteRefs.delete(note);
   SynthEngine.noteOff(note);
-  litNotes.delete(note);
   const r = kbRects.get(note);
   if (r) r.classList.remove('on');
-  if (litNotes.size === 0) document.body.classList.remove('playing');
+  if (noteRefs.size === 0) document.body.classList.remove('playing');
 }
 
 // 指（ポインター）ごとに押鍵を管理し、離した指の音だけを止める（chord-lab実績パターン）
@@ -510,9 +539,10 @@ function setupKeyboardInput() {
   const pcHeld = new Map();
   document.addEventListener('keydown', (e) => {
     if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    // Escapeはフォーカス位置に関係なく割当モードを解除する（SELECT系ガードより先に判定）
+    if (e.code === 'Escape') { exitAssignMode(); return; }
     const t = e.target;
     if (t && t.tagName && /^(SELECT|INPUT|TEXTAREA)$/.test(t.tagName)) return;
-    if (e.code === 'Escape') { exitAssignMode(); return; }
     if (e.code === 'KeyZ') { pcBase = Math.max(24, pcBase - 12); return; }
     if (e.code === 'KeyX') { pcBase = Math.min(84, pcBase + 12); return; }
     const offset = PC_KEYMAP[e.code];
@@ -593,8 +623,8 @@ function applyPreset(patch) {
   SynthEngine.applyPatch(Object.assign(defaultPatch(), patch));
   refreshAllVisuals();
   renderAssigned();
-  updateModRing();
-  Viz.updateGeometry();
+  updateModRing();      // has-mod（非表示ノブの強制表示）を反映してから
+  Viz.updateGeometry(); // 配線ジオメトリを計算する
   saveSettings();
 }
 

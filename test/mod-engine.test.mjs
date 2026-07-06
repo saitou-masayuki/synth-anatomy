@@ -85,6 +85,20 @@ test('ADSR: リリースは離した時点の値から0へ減衰', () => {
   assert.ok(envValue(ADSR, 10, 3) < 0.01, 'リリース後に音が残る');
 });
 
+test('ADSR: リリース中はheld値が「離した瞬間」で凍結される（音の実体と同じ軌道）', () => {
+  // 実音は noteOff 時点の値から setTargetAtTime(0) で単調減衰する。
+  // ミラーが tOn を進め続けて envHeldValue を再評価すると、アタック途中で離した場合に
+  // 離鍵後むしろ値が上昇し、リトリガー時の setValueAtTime で音量ジャンプ（クリック）が出る
+  const slow = { attack: 4, decay: 1, sustain: 0.5, release: 6 };
+  const atRelease = envValue(slow, 1, null); // 1秒押鍵 → 0.25
+  assert.ok(Math.abs(atRelease - 0.25) < 1e-9);
+  // 離鍵1秒後（tOnは2秒に進んでいる）: 0.25 × exp(-3×1/6) ≈ 0.1516 でなければならない
+  const r1 = envValue(slow, 2, 1);
+  assert.ok(Math.abs(r1 - 0.25 * Math.exp(-0.5)) < 1e-6, `凍結されていない: ${r1}`);
+  // リリース中は単調減少（上昇したら実音との乖離）
+  assert.ok(envValue(slow, 3, 2) < r1);
+});
+
 test('ADSR: アタック途中で離しても連続的に減衰する', () => {
   const atRelease = envValue(ADSR, 0.05, null); // アタック途中 = 0.5
   const r = envValue(ADSR, 0.05, 0.001);

@@ -44,9 +44,11 @@ function envHeldValue(adsr, tOn) {
 }
 
 function envValue(adsr, tOn, tOff) {
-  const held = envHeldValue(adsr, tOn);
-  if (tOff === null || tOff === undefined) return held;
-  return held * Math.exp(-3 * tOff / adsr.release);
+  if (tOff === null || tOff === undefined) return envHeldValue(adsr, tOn);
+  // リリースは「離した瞬間の値」から減衰する（音の実体の setTargetAtTime(0) と同じ軌道）。
+  // tOn は進み続けるため、離鍵時点 tOn - tOff で held 値を凍結して評価する
+  const heldAtRelease = envHeldValue(adsr, tOn - tOff);
+  return heldAtRelease * Math.exp(-3 * tOff / adsr.release);
 }
 
 // パッチ（平坦な辞書）からアクティブなモジュレーションルートを解決する。

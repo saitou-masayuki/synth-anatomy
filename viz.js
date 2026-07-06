@@ -310,11 +310,12 @@ var Viz = (() => {
     }
   }
 
-  // 変調先 → 対応するノブ要素（oscA.pitchはファインノブに代表させる）
+  // 変調先 → 対応するノブ要素（oscA.pitchはファインノブに代表させる）。
+  // 非表示（display:none）の要素は座標が全て0になるため対象外にする
   function knobElForDest(dst) {
     const id = dst === 'oscA.pitch' ? 'oscA.fine' : dst;
-    const wrap = document.querySelector(`.param[data-param="${CSS.escape(id)}"] .knob`);
-    return wrap || null;
+    const el = document.querySelector(`.param[data-param="${CSS.escape(id)}"] .knob`);
+    return el && el.offsetParent !== null ? el : null;
   }
 
   // 毎フレームの脈動更新（線の透明度・太さ・粒子位置）
@@ -331,10 +332,9 @@ var Viz = (() => {
       overlay.mod.core.setAttribute('stroke-width', 1.4 + strength * 2);
       overlay.mod.glow.setAttribute('opacity', 0.1 + strength * 0.35);
       if (overlay.particle && overlay.modPoints) {
-        // 粒子はLFO1周期で線を1往行する（ミラー位相と同期）
-        const t = SynthEngine.audibleTime();
-        const patch = SynthEngine.getPatch();
-        const phase = ((t * patch['lfo1.rateHz']) % 1 + 1) % 1;
+        // 粒子はLFO1周期で線を1往行する。位相はエンジンの位相アキュムレーター
+        // （レート変更時に連続性を保って切り直される）と同じ値を使う
+        const phase = ((mirror.lfoPhase % 1) + 1) % 1;
         const idx = Math.min(overlay.modPoints.length - 1, Math.round(phase * (overlay.modPoints.length - 1)));
         const p = overlay.modPoints[idx];
         overlay.particle.setAttribute('cx', p.x);
