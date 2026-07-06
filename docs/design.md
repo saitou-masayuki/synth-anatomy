@@ -165,6 +165,10 @@ synth-anatomy/
 
 OSC B・NOISE・ユニゾン（1-7声/デチューン/ブレンド）・ENV2（自由割当）・FX（Dist/Delay/Reverb）・コーチマーク・スペクトル差分塗り・下流ハイライト。**iOS実機でのノード数上限・fps計測タスクをユニゾン導入前に実施**（iPhoneでの実用性判断）。学習マップ（`content-units.js`、ブロック段階公開）もここから。
 
+Codexレビュー（2026-07-06）からの持ち越しバックログ:
+- ノブのキーボード操作とアクセシビリティ（`role="slider"`・`aria-value*`・矢印キー操作）
+- WT位置のLFO変調は音側が約30Hz駆動＋平滑化のため、LFO 20Hz付近では表示（解析式）と実音がなまり分ズレる既知の制約。対策候補: control-rate宛のLFO実効上限を下げる、または音側の実効値を表示にも使う
+
 ### Phase 2: サウンドレシピ
 
 エンジン拡張をレシピ要求から逆算して確定: lp24 / glide / chorus / uniWidth / pan / lfo2 / BPMクロック（rateSync・delay同期）/ ポリ発音（maxVoices=4〜6、パッド系レシピの前提）。

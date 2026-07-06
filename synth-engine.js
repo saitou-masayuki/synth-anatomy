@@ -459,8 +459,10 @@ var SynthEngine = (() => {
       wtPosEffective = Math.min(1, Math.max(0, patch['oscA.wtPos'] + modContribution(route, lfoVal)));
     }
     const envT = noteOnAt === null ? null : tAud - noteOnAt;
-    const envOffT = noteOffAt === null ? null : tAud - noteOffAt;
-    const envVal = envT === null ? 0 : envValue(currentAdsr(), envT, envOffT);
+    // 離鍵直後は「聴こえている時刻」がまだ離鍵前のため envOffT が負になる。
+    // その間は押下中として扱う（負のまま渡すと exp が1を超えて表示が音より先に跳ねる）
+    const envOffT = noteOffAt === null || tAud <= noteOffAt ? null : tAud - noteOffAt;
+    const envVal = envT === null ? 0 : Math.min(1, Math.max(0, envValue(currentAdsr(), envT, envOffT)));
     return { lfoVal, lfoPhase: lfoPhaseNow, envVal, envT, envOffT, wtPosEffective, routes: resolveModRoutes(patch) };
   }
 

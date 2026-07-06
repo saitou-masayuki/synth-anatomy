@@ -685,19 +685,20 @@ function silentWavUrl() {
   writeStr(36, 'data'); d.setUint32(40, n * 2, true);
   return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
 }
+let silentAudioEl = null; // 参照を保持し、無音ループがGCで止まらないようにする
 function unlockAudio() {
   if (!SynthEngine.ensureAudio()) return;
   if (audioUnlocked) return;
   audioUnlocked = true;
   try {
-    const el = new Audio(silentWavUrl());
-    el.loop = true;
-    el.volume = 0.001;
-    el.setAttribute('playsinline', '');
-    el.play().then(() => {
+    silentAudioEl = new Audio(silentWavUrl());
+    silentAudioEl.loop = true;
+    silentAudioEl.volume = 0.001;
+    silentAudioEl.setAttribute('playsinline', '');
+    silentAudioEl.play().then(() => {
       ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach((ev) => document.removeEventListener(ev, unlockAudio));
-    }).catch(() => { audioUnlocked = false; });
-  } catch { audioUnlocked = false; }
+    }).catch(() => { audioUnlocked = false; silentAudioEl = null; });
+  } catch { audioUnlocked = false; silentAudioEl = null; }
 }
 ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach((ev) => document.addEventListener(ev, unlockAudio, { passive: true }));
 
