@@ -352,9 +352,10 @@ var SynthEngine = (() => {
         if (patch['oscA.wave'] === 'wt.basic') applyWtPos(wtPosEffective);
       }
     }
-    const envVal = noteOnAt === null ? 0
-      : envValue(currentAdsr(), tAud - noteOnAt, noteOffAt === null ? null : tAud - noteOffAt);
-    return { lfoVal, envVal, wtPosEffective, routes: resolveModRoutes(patch) };
+    const envT = noteOnAt === null ? null : tAud - noteOnAt;
+    const envOffT = noteOffAt === null ? null : tAud - noteOffAt;
+    const envVal = envT === null ? 0 : envValue(currentAdsr(), envT, envOffT);
+    return { lfoVal, envVal, envT, envOffT, wtPosEffective, routes: resolveModRoutes(patch) };
   }
 
   return {

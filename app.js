@@ -1,0 +1,718 @@
+// シンセ解剖図 — UI層。
+// PARAMSの宣言的定義からノブ・セレクトを自動生成し、SynthEngineと結線する。
+// 鍵盤・PCキーボード入力・iOS音声解錠・設定保存はchord-labの実績パターンを踏襲。
+
+function $(id) { return document.getElementById(id); }
+
+// ---------- 設定の永続化（chord-lab方式: バージョン付き・壊れたデータ耐性） ----------
+const STORAGE_KEY = 'synth-anatomy-settings-v1';
+let settings = { v: 1, theme: 'dark', mode: 'simple', patch: null, presets: {} };
+try {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    const s = JSON.parse(raw);
+    if (s && s.v === 1) settings = Object.assign(settings, s);
+  }
+} catch {}
+
+let saveTimer = null;
+function saveSettings() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    settings.patch = SynthEngine.getPatch();
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
+  }, 300);
+}
+
+// ---------- ノブ・セレクトの自動生成 ----------
+
+// 発展的パラメーター（シンプルモードでは中身だけ隠す）
+const ADV_PARAMS = new Set(['oscA.octave', 'oscA.semi', 'oscA.fine', 'oscA.level']);
+// ブロック → コントロール配置先のコンテナID
+const BLOCK_CONTAINERS = {
+  oscA: 'controls-oscA', filter: 'controls-filter', ampEnv: 'controls-ampEnv',
+  lfo1: 'controls-lfo1', master: 'controls-master',
+};
+// mod1.src/dst は割当UI（🎯ボタン）経由で操作するため直接は描画しない。amtはLFOブロックに置く
+const HIDDEN_PARAMS = new Set(['mod1.src', 'mod1.dst']);
+
+const knobEls = new Map(); // paramId → { wrap, svg, valueArc, pointer, modRing, modDot, valueText, zeroNorm }
+
+function angleOf(norm) { return -135 + norm * 270; }
+function polar(r, angleDeg) {
+  const rad = (angleDeg - 90) * Math.PI / 180;
+  return { x: 36 + r * Math.cos(rad), y: 36 + r * Math.sin(rad) };
+}
+function arcPath(r, a0, a1) {
+  if (Math.abs(a1 - a0) < 0.5) return '';
+  const lo = Math.min(a0, a1), hi = Math.max(a0, a1);
+  const p0 = polar(r, lo), p1 = polar(r, hi);
+  return `M ${p0.x} ${p0.y} A ${r} ${r} 0 ${hi - lo > 180 ? 1 : 0} 1 ${p1.x} ${p1.y}`;
+}
+
+function buildKnob(def) {
+  const wrap = document.createElement('div');
+  wrap.className = 'param knob-wrap';
+  wrap.dataset.param = def.id;
+  if (ADV_PARAMS.has(def.id)) wrap.dataset.adv = '1';
+  const knob = document.createElement('div');
+  knob.className = 'knob';
+  knob.tabIndex = 0;
+  knob.innerHTML = `
+    <svg viewBox="0 0 72 72">
+      <path class="k-track" d="${arcPath(26, -135, 135)}" stroke-width="5" fill="none"/>
+      <path class="k-value" d="" stroke-width="5" fill="none"/>
+      <line class="k-pointer" x1="36" y1="36" x2="36" y2="14" stroke-width="2"/>
+      <path class="k-modring" d="" stroke-width="3" fill="none" visibility="hidden"/>
+      <circle class="k-moddot" r="3.2" visibility="hidden"/>
+    </svg>`;
+  const label = document.createElement('div');
+  label.className = 'p-label';
+  label.textContent = def.name;
+  label.title = def.short;
+  const valueText = document.createElement('div');
+  valueText.className = 'p-value';
+  wrap.appendChild(knob);
+  wrap.appendChild(label);
+  wrap.appendChild(valueText);
+  knobEls.set(def.id, {
+    wrap, knob,
+    valueArc: knob.querySelector('.k-value'),
+    pointer: knob.querySelector('.k-pointer'),
+    modRing: knob.querySelector('.k-modring'),
+    modDot: knob.querySelector('.k-moddot'),
+    valueText,
+    zeroNorm: (def.type !== 'enum' && def.min < 0) ? normParam(def.id, 0) : 0,
+  });
+  attachKnobEvents(knob, def);
+  return wrap;
+}
+
+function buildSelect(def) {
+  const wrap = document.createElement('div');
+  wrap.className = 'param select-wrap';
+  wrap.dataset.param = def.id;
+  if (ADV_PARAMS.has(def.id)) wrap.dataset.adv = '1';
+  const label = document.createElement('div');
+  label.className = 'p-label';
+  label.textContent = def.name;
+  label.title = def.short;
+  const sel = document.createElement('select');
+  for (const o of def.values) {
+    const opt = document.createElement('option');
+    opt.value = o.v;
+    opt.textContent = o.name;
+    opt.title = o.short;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener('change', () => {
+    const prev = SynthEngine.getPatch()[def.id];
+    setParam(def.id, sel.value);
+    updateReadout(def.id, prev, sel.value);
+    Viz.pulseScope(def.block);
+  });
+  wrap.appendChild(label);
+  wrap.appendChild(sel);
+  return wrap;
+}
+
+function buildControls() {
+  for (const def of PARAMS) {
+    if (def.phase !== 1 || HIDDEN_PARAMS.has(def.id)) continue;
+    const containerId = def.id === 'mod1.amt' ? 'controls-lfo1' : BLOCK_CONTAINERS[def.block];
+    const container = containerId && $(containerId);
+    if (!container) continue;
+    container.appendChild(def.ui === 'select' ? buildSelect(def) : buildKnob(def));
+  }
+}
+
+// ---------- パラメーター変更（全変更がここを通る） ----------
+
+function setParam(id, value) {
+  SynthEngine.applyParam(id, value);
+  refreshParamVisual(id);
+  if (id.startsWith('mod1.')) {
+    renderAssigned();
+    Viz.updateGeometry();
+    updateModRing();
+  }
+  if (id === 'mod1.amt' || id === 'filter.cutoff' || id === 'oscA.wtPos' || id === 'oscA.level' || id === 'oscA.fine') {
+    updateModRing();
+  }
+  saveSettings();
+}
+
+function refreshParamVisual(id) {
+  const patch = SynthEngine.getPatch();
+  const def = paramById(id);
+  const k = knobEls.get(id);
+  if (k) {
+    const norm = normParam(id, patch[id]);
+    k.valueArc.setAttribute('d', arcPath(26, angleOf(k.zeroNorm), angleOf(norm)));
+    const p = polar(22, angleOf(norm));
+    k.pointer.setAttribute('x2', p.x);
+    k.pointer.setAttribute('y2', p.y);
+    k.valueText.textContent = fmtValue(id, patch[id]);
+  }
+  const sel = document.querySelector(`.param[data-param="${CSS.escape(id)}"] select`);
+  if (sel && def.type === 'enum') sel.value = patch[id];
+}
+
+function refreshAllVisuals() {
+  for (const def of PARAMS) {
+    if (def.phase === 1) refreshParamVisual(def.id);
+  }
+}
+
+// ---------- ノブ操作（縦ドラッグ / Shift微調整 / ホイール / ダブルクリック初期値） ----------
+
+const bubble = $('bubble');
+
+function showBubble(knobEl, text) {
+  const r = knobEl.getBoundingClientRect();
+  bubble.hidden = false;
+  bubble.innerHTML = text;
+  bubble.style.left = (r.left + r.width / 2) + 'px';
+  bubble.style.top = r.top + 'px';
+}
+
+let readoutTimer = 0;
+function throttledReadout(id, prev, next) {
+  const now = performance.now();
+  if (now - readoutTimer < 150) return;
+  readoutTimer = now;
+  updateReadout(id, prev, next);
+}
+
+function attachKnobEvents(knob, def) {
+  let dragging = false;
+  let startY = 0;
+  let startNorm = 0;
+  let startValue = 0;
+
+  knob.addEventListener('pointerdown', (e) => {
+    if (document.body.classList.contains('assign-mode')) {
+      // 割当モード中: このノブを変調先として確定する
+      if (knob.classList.contains('assignable')) assignTo(def.id);
+      e.preventDefault();
+      return;
+    }
+    dragging = true;
+    startY = e.clientY;
+    const patch = SynthEngine.getPatch();
+    startValue = patch[def.id];
+    startNorm = normParam(def.id, startValue);
+    knob.setPointerCapture(e.pointerId);
+    Viz.snapshotGhosts();
+    e.preventDefault();
+  });
+
+  knob.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const scale = e.shiftKey ? 1440 : 180; // Shiftで1/8精度
+    const norm = Math.min(1, Math.max(0, startNorm + (startY - e.clientY) / scale));
+    const v = denormParam(def.id, norm);
+    setParam(def.id, v);
+    const cur = SynthEngine.getPatch()[def.id];
+    showBubble(knob, `${fmtValue(def.id, startValue)}<span class="arrow">→</span>${fmtValue(def.id, cur)}`);
+    throttledReadout(def.id, startValue, cur);
+  });
+
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    bubble.hidden = true;
+    Viz.releaseGhosts();
+    const cur = SynthEngine.getPatch()[def.id];
+    if (cur !== startValue) {
+      updateReadout(def.id, startValue, cur);
+      Viz.pulseScope(def.block);
+    }
+  };
+  knob.addEventListener('pointerup', endDrag);
+  knob.addEventListener('pointercancel', endDrag);
+
+  knob.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const patch = SynthEngine.getPatch();
+    const prev = patch[def.id];
+    const norm = normParam(def.id, prev);
+    const step = (e.deltaY < 0 ? 1 : -1) / 50;
+    setParam(def.id, denormParam(def.id, Math.min(1, Math.max(0, norm + step))));
+    throttledReadout(def.id, prev, SynthEngine.getPatch()[def.id]);
+  }, { passive: false });
+
+  knob.addEventListener('dblclick', () => {
+    const prev = SynthEngine.getPatch()[def.id];
+    setParam(def.id, def.default);
+    showBubble(knob, `${fmtValue(def.id, prev)}<span class="arrow">→</span>${fmtValue(def.id, def.default)}（初期値）`);
+    setTimeout(() => { bubble.hidden = true; }, 900);
+    updateReadout(def.id, prev, def.default);
+  });
+}
+
+// ---------- 説明パネル（今なにが起きた？） ----------
+
+function updateReadout(id, prev, next) {
+  if (prev === next) return;
+  const d = describeChange(id, prev, next, SynthEngine.getPatch());
+  if (!d) return;
+  $('roAction').textContent = d.action;
+  $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">👀 ${escapeHtml(d.watch)}</span>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- モジュレーション割当（Phase 1: クリック選択式） ----------
+
+// 変調先IDと「クリックするノブ」の対応（ピッチはファインノブに代表させる）
+const ASSIGN_KNOB_TO_DEST = {
+  'filter.cutoff': 'filter.cutoff',
+  'oscA.wtPos': 'oscA.wtPos',
+  'oscA.level': 'oscA.level',
+  'oscA.fine': 'oscA.pitch',
+};
+
+function enterAssignMode() {
+  document.body.classList.add('assign-mode');
+  for (const [knobParam] of Object.entries(ASSIGN_KNOB_TO_DEST)) {
+    const k = knobEls.get(knobParam);
+    if (k) k.knob.classList.add('assignable');
+  }
+  $('roAction').textContent = '割当モード: 光っているノブをクリック';
+  $('roDetail').textContent = 'LFO1で揺らすノブを選びます。Escキーまたはもう一度ボタンでキャンセル。';
+}
+
+function exitAssignMode() {
+  document.body.classList.remove('assign-mode');
+  for (const k of knobEls.values()) k.knob.classList.remove('assignable');
+}
+
+function assignTo(knobParamId) {
+  const dest = ASSIGN_KNOB_TO_DEST[knobParamId];
+  if (!dest) return;
+  exitAssignMode();
+  const patch = SynthEngine.getPatch();
+  const prevDst = patch['mod1.dst'];
+  SynthEngine.applyParam('mod1.src', 'lfo1');
+  if (!patch['mod1.amt']) SynthEngine.applyParam('mod1.amt', 0.5);
+  setParam('mod1.dst', dest);
+  refreshParamVisual('mod1.amt');
+  updateReadout('mod1.dst', prevDst, dest);
+  Viz.pulseScope('lfo1');
+}
+
+function unassign() {
+  const prev = SynthEngine.getPatch()['mod1.dst'];
+  SynthEngine.applyParam('mod1.src', 'none');
+  setParam('mod1.dst', 'none');
+  updateReadout('mod1.dst', prev, 'none');
+}
+
+function renderAssigned() {
+  const list = $('assignedList');
+  list.innerHTML = '';
+  const patch = SynthEngine.getPatch();
+  const routes = resolveModRoutes(patch);
+  for (const route of routes) {
+    const dest = MOD_DESTS.find((d) => d.id === route.dst);
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `LFO1 〜▶ ${escapeHtml(dest ? dest.name : route.dst)} <button type="button" title="割当を解除">×</button>`;
+    chip.querySelector('button').addEventListener('click', unassign);
+    list.appendChild(chip);
+  }
+  if (routes.length === 0) {
+    const hint = document.createElement('span');
+    hint.style.color = 'var(--text-faint)';
+    hint.textContent = '未割当（ボタンでノブに配線してみよう）';
+    list.appendChild(hint);
+  }
+}
+
+// ---------- モッドリング（割当先ノブの外周に揺れの範囲と現在位置を表示） ----------
+
+let activeModKnob = null; // { knobParamId, route }
+
+function updateModRing() {
+  for (const k of knobEls.values()) {
+    k.modRing.setAttribute('visibility', 'hidden');
+    k.modDot.setAttribute('visibility', 'hidden');
+  }
+  activeModKnob = null;
+  const patch = SynthEngine.getPatch();
+  const route = resolveModRoutes(patch).find((r) => r.src === 'lfo1');
+  if (!route) return;
+  const knobParamId = route.dst === 'oscA.pitch' ? 'oscA.fine' : route.dst;
+  const k = knobEls.get(knobParamId);
+  if (!k) return;
+  const bounds = modRingBounds(route, patch);
+  if (!bounds) return;
+  k.modRing.setAttribute('d', arcPath(32, angleOf(bounds.lo), angleOf(bounds.hi)));
+  k.modRing.setAttribute('visibility', 'visible');
+  k.modDot.setAttribute('visibility', 'visible');
+  activeModKnob = { knobParamId, route };
+}
+
+// 揺れの範囲（正規化空間）。cutoff/pitchはセント→実値に変換してから正規化する
+function modRingBounds(route, patch) {
+  const depth = Math.abs(route.amt) * route.range;
+  if (route.dst === 'filter.cutoff') {
+    const base = patch['filter.cutoff'];
+    return {
+      lo: normParam('filter.cutoff', base * Math.pow(2, -depth / 1200)),
+      hi: normParam('filter.cutoff', base * Math.pow(2, depth / 1200)),
+    };
+  }
+  if (route.dst === 'oscA.wtPos') {
+    const base = patch['oscA.wtPos'];
+    return { lo: normParam('oscA.wtPos', base - depth), hi: normParam('oscA.wtPos', base + depth) };
+  }
+  if (route.dst === 'oscA.level') {
+    const base = patch['oscA.level'];
+    return { lo: normParam('oscA.level', base - depth), hi: normParam('oscA.level', base + depth) };
+  }
+  if (route.dst === 'oscA.pitch') {
+    const base = patch['oscA.fine'];
+    return { lo: normParam('oscA.fine', base - depth), hi: normParam('oscA.fine', base + depth) };
+  }
+  return null;
+}
+
+// 毎フレーム: モッドリング上の点を実際の変調位置へ動かす（Vizのミラー値駆動）
+Viz.onMirror = (mirror) => {
+  if (!mirror || !activeModKnob) return;
+  const k = knobEls.get(activeModKnob.knobParamId);
+  if (!k) return;
+  const route = activeModKnob.route;
+  const patch = SynthEngine.getPatch();
+  const contrib = modContribution(route, mirror.lfoVal);
+  let norm;
+  if (route.dst === 'filter.cutoff') {
+    norm = normParam('filter.cutoff', patch['filter.cutoff'] * Math.pow(2, contrib / 1200));
+  } else if (route.dst === 'oscA.wtPos') {
+    norm = mirror.wtPosEffective;
+  } else if (route.dst === 'oscA.level') {
+    norm = normParam('oscA.level', patch['oscA.level'] + contrib);
+  } else if (route.dst === 'oscA.pitch') {
+    norm = normParam('oscA.fine', patch['oscA.fine'] + contrib);
+  } else return;
+  const p = polar(32, angleOf(norm));
+  k.modDot.setAttribute('cx', p.x);
+  k.modDot.setAttribute('cy', p.y);
+};
+
+// ---------- 鍵盤（chord-labのSVG鍵盤を25鍵に固定して移植） ----------
+
+const KB_LO = 48, KB_HI = 72; // C3〜C5
+const WK_W = 30, WK_H = 100, BK_W = 18, BK_H = 62;
+const BLACK_PC = [1, 3, 6, 8, 10];
+const kbRects = new Map();
+
+function buildKeyboard() {
+  const svg = $('kb');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const mk = (tag, attrs) => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  };
+  const whiteX = new Map();
+  let x = 0;
+  for (let n = KB_LO; n <= KB_HI; n++) {
+    if (!BLACK_PC.includes(n % 12)) { whiteX.set(n, x); x += WK_W; }
+  }
+  svg.setAttribute('viewBox', `0 0 ${x} ${WK_H + 4}`);
+  for (const [n, wx] of whiteX) {
+    const r = mk('rect', { x: wx + 0.5, y: 1, width: WK_W - 1, height: WK_H, rx: 3, class: 'wk', 'data-note': n });
+    svg.appendChild(r);
+    kbRects.set(n, r);
+  }
+  for (const [n, wx] of whiteX) {
+    if (n % 12 === 0) {
+      const t = mk('text', { x: wx + WK_W / 2, y: WK_H - 7, 'text-anchor': 'middle', 'font-size': 10, fill: 'var(--text-faint)' });
+      t.textContent = 'C' + (Math.floor(n / 12) - 1);
+      svg.appendChild(t);
+    }
+  }
+  for (let n = KB_LO; n <= KB_HI; n++) {
+    if (BLACK_PC.includes(n % 12)) {
+      const prevWhiteX = whiteX.get(n - 1);
+      if (prevWhiteX === undefined) continue;
+      const r = mk('rect', { x: prevWhiteX + WK_W - BK_W / 2, y: 1, width: BK_W, height: BK_H, rx: 2.5, class: 'bk', 'data-note': n });
+      svg.appendChild(r);
+      kbRects.set(n, r);
+    }
+  }
+}
+
+// ---------- 発音（エンジン呼び出し＋鍵の点灯＋パイプ加速） ----------
+
+const litNotes = new Set();
+
+function noteOn(note) {
+  SynthEngine.noteOn(note);
+  litNotes.add(note);
+  const r = kbRects.get(note);
+  if (r) r.classList.add('on');
+  document.body.classList.add('playing');
+}
+
+function noteOff(note) {
+  SynthEngine.noteOff(note);
+  litNotes.delete(note);
+  const r = kbRects.get(note);
+  if (r) r.classList.remove('on');
+  if (litNotes.size === 0) document.body.classList.remove('playing');
+}
+
+// 指（ポインター）ごとに押鍵を管理し、離した指の音だけを止める（chord-lab実績パターン）
+const pointerHeld = new Map();
+function setupKeyboardInput() {
+  $('kb').addEventListener('pointerdown', (e) => {
+    const attr = e.target.getAttribute && e.target.getAttribute('data-note');
+    if (attr === null || attr === undefined) return;
+    e.preventDefault();
+    const note = Number(attr);
+    pointerHeld.set(e.pointerId, note);
+    noteOn(note);
+  });
+  const releaseHeldPointer = (e) => {
+    const note = pointerHeld.get(e.pointerId);
+    if (note === undefined) return;
+    pointerHeld.delete(e.pointerId);
+    noteOff(note);
+  };
+  window.addEventListener('pointerup', releaseHeldPointer);
+  window.addEventListener('pointercancel', releaseHeldPointer);
+  // グリッサンド: 押した指を滑らせると触れた鍵に追従する
+  window.addEventListener('pointermove', (e) => {
+    const cur = pointerHeld.get(e.pointerId);
+    if (cur === undefined) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const attr = el && el.getAttribute && el.getAttribute('data-note');
+    if (attr === null || attr === undefined) return;
+    const note = Number(attr);
+    if (note === cur) return;
+    noteOff(cur);
+    pointerHeld.set(e.pointerId, note);
+    noteOn(note);
+  });
+
+  // PCキーボード演奏（A・W・S…の定番マッピング、Z / X でオクターブ移動）
+  const PC_KEYMAP = {
+    KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7,
+    KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16,
+  };
+  let pcBase = 60;
+  const pcHeld = new Map();
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    if (t && t.tagName && /^(SELECT|INPUT|TEXTAREA)$/.test(t.tagName)) return;
+    if (e.code === 'Escape') { exitAssignMode(); return; }
+    if (e.code === 'KeyZ') { pcBase = Math.max(24, pcBase - 12); return; }
+    if (e.code === 'KeyX') { pcBase = Math.min(84, pcBase + 12); return; }
+    const offset = PC_KEYMAP[e.code];
+    if (offset === undefined || pcHeld.has(e.code)) return;
+    const note = pcBase + offset;
+    pcHeld.set(e.code, note);
+    noteOn(note);
+  });
+  document.addEventListener('keyup', (e) => {
+    const note = pcHeld.get(e.code);
+    if (note === undefined) return;
+    pcHeld.delete(e.code);
+    noteOff(note);
+  });
+  // フォーカス喪失時は押鍵をすべて解放（Cmd+Tab後の鳴り残り対策）
+  window.addEventListener('blur', () => {
+    for (const [, note] of pcHeld) noteOff(note);
+    pcHeld.clear();
+    for (const [, note] of pointerHeld) noteOff(note);
+    pointerHeld.clear();
+  });
+}
+
+// ---------- プリセット ----------
+
+// 工場出荷プリセット: defaultPatchとの差分だけ書く
+const FACTORY_PRESETS = {
+  '初期状態': {},
+  'プラック': {
+    'ampEnv.attack': 0.002, 'ampEnv.decay': 0.4, 'ampEnv.sustain': 0, 'ampEnv.release': 0.4,
+    'filter.cutoff': 2500, 'filter.reso': 0.3,
+  },
+  'ワウベース': {
+    'oscA.octave': -1, 'filter.cutoff': 500, 'filter.reso': 0.4,
+    'lfo1.shape': 'sine', 'lfo1.rateHz': 3,
+    'mod1.src': 'lfo1', 'mod1.dst': 'filter.cutoff', 'mod1.amt': 0.6,
+    'ampEnv.sustain': 1,
+  },
+  'WTモーション・パッド': {
+    'oscA.wave': 'wt.basic', 'oscA.wtPos': 0.3,
+    'ampEnv.attack': 0.6, 'ampEnv.release': 1.5, 'ampEnv.sustain': 0.9,
+    'lfo1.shape': 'tri', 'lfo1.rateHz': 0.15,
+    'mod1.src': 'lfo1', 'mod1.dst': 'oscA.wtPos', 'mod1.amt': 0.6,
+    'filter.cutoff': 9000,
+  },
+  'ビブラート・リード': {
+    'oscA.wave': 'square', 'filter.cutoff': 3000,
+    'lfo1.shape': 'sine', 'lfo1.rateHz': 5.5,
+    'mod1.src': 'lfo1', 'mod1.dst': 'oscA.pitch', 'mod1.amt': 0.05,
+    'ampEnv.attack': 0.02, 'ampEnv.sustain': 1,
+  },
+};
+
+function renderPresetSelect() {
+  const sel = $('presetSelect');
+  sel.innerHTML = '';
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = 'プリセット…';
+  sel.appendChild(ph);
+  const addGroup = (label, names) => {
+    if (!names.length) return;
+    const g = document.createElement('optgroup');
+    g.label = label;
+    for (const n of names) {
+      const o = document.createElement('option');
+      o.value = label + ':' + n;
+      o.textContent = n;
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  };
+  addGroup('内蔵', Object.keys(FACTORY_PRESETS));
+  addGroup('マイプリセット', Object.keys(settings.presets));
+}
+
+function applyPreset(patch) {
+  SynthEngine.applyPatch(Object.assign(defaultPatch(), patch));
+  refreshAllVisuals();
+  renderAssigned();
+  updateModRing();
+  Viz.updateGeometry();
+  saveSettings();
+}
+
+function setupPresets() {
+  renderPresetSelect();
+  $('presetSelect').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (!v) return;
+    const [group, name] = [v.slice(0, v.indexOf(':')), v.slice(v.indexOf(':') + 1)];
+    const patch = group === '内蔵' ? FACTORY_PRESETS[name] : settings.presets[name];
+    if (patch) {
+      applyPreset(patch);
+      $('roAction').textContent = `プリセット「${name}」を読み込みました`;
+      $('roDetail').textContent = 'ノブの位置を眺めてから音を鳴らすと「この音はこう作られている」が見えてきます。';
+    }
+    e.target.value = '';
+  });
+  $('presetSave').addEventListener('click', () => {
+    const name = prompt('プリセット名を入力してください');
+    if (!name) return;
+    settings.presets[name] = SynthEngine.getPatch();
+    saveSettings();
+    renderPresetSelect();
+  });
+  $('presetInit').addEventListener('click', () => {
+    applyPreset({});
+    $('roAction').textContent = '初期状態に戻しました';
+    $('roDetail').textContent = 'まっさらなノコギリ波から音作りを始めましょう。';
+  });
+}
+
+// ---------- 表示モード（シンプル/フル）とテーマ ----------
+
+function applyMode(mode) {
+  settings.mode = mode;
+  document.body.classList.toggle('simple', mode === 'simple');
+  $('modeSimple').classList.toggle('on', mode === 'simple');
+  $('modeFull').classList.toggle('on', mode === 'full');
+  Viz.updateGeometry();
+  saveSettings();
+}
+
+function applyTheme(theme) {
+  settings.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  saveSettings();
+}
+
+// ---------- iOS対策: 最初のユーザー操作で音声を解錠（chord-lab実績トリック） ----------
+
+let audioUnlocked = false;
+function silentWavUrl() {
+  const sr = 8000, n = sr / 2, b = new ArrayBuffer(44 + n * 2), d = new DataView(b);
+  const writeStr = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
+  writeStr(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); writeStr(8, 'WAVE'); writeStr(12, 'fmt ');
+  d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
+  d.setUint32(24, sr, true); d.setUint32(28, sr * 2, true); d.setUint16(32, 2, true); d.setUint16(34, 16, true);
+  writeStr(36, 'data'); d.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+}
+function unlockAudio() {
+  if (!SynthEngine.ensureAudio()) return;
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    const el = new Audio(silentWavUrl());
+    el.loop = true;
+    el.volume = 0.001;
+    el.setAttribute('playsinline', '');
+    el.play().then(() => {
+      ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach((ev) => document.removeEventListener(ev, unlockAudio));
+    }).catch(() => { audioUnlocked = false; });
+  } catch { audioUnlocked = false; }
+}
+['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach((ev) => document.addEventListener(ev, unlockAudio, { passive: true }));
+
+// バックグラウンドや音声中断から戻ったとき、自動で音を復帰させる
+function resumeAudioIfNeeded() {
+  const ctx = SynthEngine.audioCtx;
+  if (ctx && ctx.state !== 'running') {
+    try { ctx.resume(); } catch {}
+  }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeAudioIfNeeded(); });
+window.addEventListener('pageshow', resumeAudioIfNeeded);
+window.addEventListener('focus', resumeAudioIfNeeded);
+
+// ---------- 初期化 ----------
+
+buildControls();
+buildKeyboard();
+setupKeyboardInput();
+setupPresets();
+
+if (settings.patch) SynthEngine.applyPatch(settings.patch);
+refreshAllVisuals();
+renderAssigned();
+
+$('assignBtn').addEventListener('click', () => {
+  if (document.body.classList.contains('assign-mode')) exitAssignMode();
+  else enterAssignMode();
+});
+document.addEventListener('pointerdown', (e) => {
+  // 割当モード中に背景をクリックしたらキャンセル（ノブ・ボタンは各自で処理）
+  if (!document.body.classList.contains('assign-mode')) return;
+  if (e.target.closest('.knob') || e.target.closest('#assignBtn')) return;
+  exitAssignMode();
+});
+
+$('modeSimple').addEventListener('click', () => applyMode('simple'));
+$('modeFull').addEventListener('click', () => applyMode('full'));
+$('themeBtn').addEventListener('click', () => applyTheme(settings.theme === 'dark' ? 'light' : 'dark'));
+
+applyMode(settings.mode);
+applyTheme(settings.theme);
+Viz.init();
+updateModRing();
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}

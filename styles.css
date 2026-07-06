@@ -1,0 +1,195 @@
+/* シンセ解剖図のスタイル。テーマ変数は chord-lab の体系を踏襲（:root[data-theme] で切替） */
+:root[data-theme="dark"] {
+  --bg: #12141A; --panel: #1B1E27; --panel-2: #232732; --border: #2E3340;
+  --text: #EEF0F5; --text-dim: #9AA0AE; --text-faint: #5A6070;
+  --accent: #7AA2F7; --accent-soft: #A8C2FF; --accent-dark: #1E2C4A; --accent-text: #EAF1FF;
+  --ok: #9ECE6A; --ng: #E8884E;
+  --audio-line: #7AA2F7;       /* 音声経路の色 */
+  --mod-line: #E0AF68;         /* モジュレーション線の色（別ヒュー） */
+  --env-line: #9ECE6A;         /* ENV線の色 */
+  --scope-wave: #7AA2F7; --scope-spec: #9ECE6A; --scope-ghost: #5A6070;
+  --scope-bg: #0D0F14; --scope-grid: #232732;
+  --kb-bg: #0D0F14; --white-key: #F5F3EF; --black-key: #1A1A1E; --key-stroke: #44444C;
+  --key-active: #7AA2F7;
+}
+:root[data-theme="light"] {
+  --bg: #F5F4F0; --panel: #FFFFFF; --panel-2: #ECEBE5; --border: #D9D8CF;
+  --text: #26262A; --text-dim: #6E6E78; --text-faint: #A2A2AA;
+  --accent: #3465C9; --accent-soft: #7A99DD; --accent-dark: #DCE6FA; --accent-text: #FFFFFF;
+  --ok: #2E8B57; --ng: #C26A2E;
+  --audio-line: #3465C9; --mod-line: #C98A1F; --env-line: #2E8B57;
+  --scope-wave: #3465C9; --scope-spec: #2E8B57; --scope-ghost: #B5B4AC;
+  --scope-bg: #FAFAF7; --scope-grid: #E4E3DC;
+  --kb-bg: #E8E7E2; --white-key: #FFFFFF; --black-key: #2A2A30; --key-stroke: #B9B8B0;
+  --key-active: #3465C9;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  min-height: 100vh; display: flex; justify-content: center;
+}
+.app { width: 100%; max-width: 1280px; padding: 0 20px 20px; display: flex; flex-direction: column; }
+
+/* ---- ヘッダー ---- */
+.bar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 2px; border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap;
+}
+.brand { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); white-space: nowrap; }
+.brand .accent { color: var(--accent); margin-right: 7px; }
+.bar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+select, .icon-btn, button.text-btn {
+  background: var(--panel); color: var(--text-dim); border: 1px solid var(--border);
+  border-radius: 7px; font-size: 12px; padding: 5px 9px; cursor: pointer; font-family: inherit;
+}
+select:hover, .icon-btn:hover, button.text-btn:hover { color: var(--text); border-color: var(--text-faint); }
+.view-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.view-tabs button {
+  background: var(--panel); color: var(--text-dim); border: none; font-size: 12px;
+  padding: 6px 14px; cursor: pointer; font-family: inherit;
+}
+.view-tabs button.on { background: var(--accent-dark); color: var(--accent-text); }
+
+/* ---- ラック（解剖図本体） ---- */
+main { position: relative; flex: 1; display: flex; flex-direction: column; gap: 10px; padding-top: 12px; }
+#overlay {
+  position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: visible;
+}
+.rack { display: grid; gap: 0; align-items: stretch; }
+#signalRack { grid-template-columns: 7fr 26px 5fr 26px 3fr 26px 3fr; }
+#modRack { grid-template-columns: 4fr 5fr; gap: 14px; margin-top: 4px; }
+
+.block {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  position: relative;
+}
+.block-title {
+  margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--text-dim);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.block-title .tip { font-size: 10.5px; font-weight: 400; color: var(--text-faint); letter-spacing: 0; }
+.block.placeholder { border-style: dashed; opacity: 0.6; justify-content: center; align-items: center; }
+.block.placeholder .ph-text { font-size: 11px; color: var(--text-faint); text-align: center; line-height: 1.6; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: flex-start; }
+
+/* ---- 音声パイプ（ブロック間の流れ） ---- */
+.pipe { position: relative; align-self: center; height: 10px; width: 100%; overflow: hidden; border-radius: 4px; background: var(--panel-2); }
+.pipe .flow {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 8px, var(--audio-line) 8px 14px);
+  opacity: 0.35; animation: flow 1.6s linear infinite;
+}
+body.playing .pipe .flow { opacity: 0.9; animation-duration: 0.5s; }
+@keyframes flow { from { transform: translateX(-22px); } to { transform: translateX(0); } }
+
+/* ---- ノブ ---- */
+.param { display: flex; flex-direction: column; align-items: center; width: 62px; }
+.param .p-label { font-size: 10px; color: var(--text-dim); margin-top: 1px; white-space: nowrap; }
+.param .p-value { font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.knob { width: 52px; height: 52px; cursor: ns-resize; touch-action: none; position: relative; border-radius: 50%; }
+.knob:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.knob svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.knob .k-track { stroke: var(--panel-2); }
+.knob .k-value { stroke: var(--accent); }
+.knob .k-pointer { stroke: var(--text); }
+.knob .k-modring { stroke: var(--mod-line); opacity: 0.55; }
+.knob .k-moddot { fill: var(--mod-line); }
+.select-wrap { width: auto; min-width: 70px; align-items: stretch; }
+.select-wrap select { width: 100%; margin-top: 3px; }
+.select-wrap .p-label { text-align: center; }
+
+/* 割当モード: 割当可能なノブが呼吸し、それ以外は減光する */
+body.assign-mode .knob { opacity: 0.35; }
+body.assign-mode .knob.assignable { opacity: 1; cursor: pointer; animation: breathe 1.2s ease-in-out infinite; border-radius: 50%; }
+@keyframes breathe { 0%, 100% { box-shadow: 0 0 0 2px var(--mod-line); } 50% { box-shadow: 0 0 10px 4px var(--mod-line); } }
+
+/* 値バブル（ドラッグ中の 変更前 → 現在値 表示） */
+#bubble {
+  position: fixed; z-index: 50; pointer-events: none; background: var(--panel-2);
+  border: 1px solid var(--border); color: var(--text); border-radius: 7px;
+  padding: 4px 9px; font-size: 12px; font-variant-numeric: tabular-nums;
+  transform: translate(-50%, -130%); white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.3);
+}
+#bubble .arrow { color: var(--accent); margin: 0 4px; }
+
+/* ---- スコープ ---- */
+.scopes { display: flex; gap: 6px; }
+.scopes canvas {
+  background: var(--scope-bg); border: 1px solid var(--border); border-radius: 6px;
+  width: 100%; height: 64px; min-width: 0; flex: 1;
+}
+.scope-label { font-size: 9px; color: var(--text-faint); letter-spacing: 0.5px; margin-bottom: -4px; display: flex; justify-content: space-between; }
+.scopes canvas.pulse { animation: scope-pulse 0.6s ease-out 2; }
+@keyframes scope-pulse { 0% { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); } 100% { border-color: var(--border); box-shadow: none; } }
+
+/* ---- モジュレーターラック ---- */
+#modRack .block { flex-direction: row; align-items: flex-start; gap: 14px; }
+#modRack .controls { flex: 0 0 auto; }
+.env-canvas-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.env-canvas-wrap canvas { width: 100%; height: 74px; background: var(--scope-bg); border: 1px solid var(--border); border-radius: 6px; }
+.mod-assign { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--text-dim); flex: 1; min-width: 0; }
+.mod-assign .assigned { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mod-assign .chip {
+  background: var(--panel-2); border: 1px solid var(--mod-line); color: var(--text);
+  border-radius: 12px; padding: 2px 9px; font-size: 11px; display: inline-flex; align-items: center; gap: 6px;
+}
+.mod-assign .chip button { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 0; }
+.mod-assign .chip button:hover { color: var(--ng); }
+button.assign-btn {
+  background: var(--panel-2); border: 1px solid var(--mod-line); color: var(--text);
+  border-radius: 7px; font-size: 12px; padding: 6px 12px; cursor: pointer; font-family: inherit;
+}
+button.assign-btn:hover { box-shadow: 0 0 8px var(--mod-line); }
+body.assign-mode button.assign-btn { background: var(--mod-line); color: var(--bg); }
+
+/* ---- 説明パネル（chord-lab .lab-readout 踏襲の全幅帯） ---- */
+#readout {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 16px; display: flex; gap: 14px; align-items: baseline; min-height: 58px;
+}
+#readout .ro-badge {
+  flex: none; font-size: 10px; letter-spacing: 1px; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 10px; padding: 2px 8px; white-space: nowrap;
+  align-self: center;
+}
+#readout .ro-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+#readout .ro-action { font-size: 14px; font-weight: 600; }
+#readout .ro-detail { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+#readout .ro-detail .watch { color: var(--ok); }
+
+/* ---- 鍵盤 ---- */
+#kbWrap { background: var(--kb-bg); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px 6px; }
+#kb { width: 100%; height: 110px; display: block; touch-action: none; }
+#kb .wk { fill: var(--white-key); stroke: var(--key-stroke); stroke-width: 1; cursor: pointer; }
+#kb .bk { fill: var(--black-key); stroke: var(--key-stroke); stroke-width: 1; cursor: pointer; }
+#kb .wk.on { fill: var(--key-active); }
+#kb .bk.on { fill: var(--accent-soft); }
+.kb-hint { font-size: 10px; color: var(--text-faint); text-align: center; margin-top: 4px; }
+
+/* ---- SVGオーバーレイの線 ---- */
+#overlay .mod-line-glow { fill: none; stroke: var(--mod-line); stroke-linecap: round; }
+#overlay .mod-line-core { fill: none; stroke: var(--mod-line); stroke-linecap: round; }
+#overlay .env-line-glow { fill: none; stroke: var(--env-line); stroke-linecap: round; }
+#overlay .env-line-core { fill: none; stroke: var(--env-line); stroke-linecap: round; }
+#overlay .particle { fill: var(--mod-line); }
+
+/* ---- シンプルモード: 発展的なノブの中身だけ隠す（ブロックの枠は常に見せる） ---- */
+body.simple [data-adv="1"] { display: none; }
+
+/* ---- フッター ---- */
+footer { font-size: 10.5px; color: var(--text-faint); padding: 6px 4px 0; display: flex; gap: 18px; flex-wrap: wrap; }
+footer .lg-audio { color: var(--audio-line); }
+footer .lg-mod { color: var(--mod-line); }
+
+/* タブレット以下: ラックを縦積みに落とす */
+@media (max-width: 900px) {
+  #signalRack { grid-template-columns: 1fr 1fr; }
+  #signalRack .pipe { display: none; }
+  #modRack { grid-template-columns: 1fr; }
+}

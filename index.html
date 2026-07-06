@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#12141A">
+  <title>シンセ解剖図 — 信号の流れが見えるブラウザシンセ</title>
+  <meta name="description" content="OSC→フィルター→アンプの信号フロー図そのものがUIのブラウザシンセ。波形・スペクトル・モジュレーションが音と同期して見え、ソフトシンセのパラメーターの繋がりを体感して学べます。">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" type="image/png" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="bar">
+      <div class="brand"><span class="accent">♪</span>シンセ解剖図</div>
+      <div class="bar-right">
+        <span class="view-tabs" id="modeTabs">
+          <button id="modeSimple" type="button">シンプル</button>
+          <button id="modeFull" type="button">フル</button>
+        </span>
+        <select id="presetSelect" title="プリセット"></select>
+        <button class="text-btn" id="presetSave" type="button">保存</button>
+        <button class="text-btn" id="presetInit" type="button">初期化</button>
+        <button class="icon-btn" id="themeBtn" type="button" title="テーマ切替">◐</button>
+      </div>
+    </header>
+
+    <main id="main">
+      <svg id="overlay" aria-hidden="true"></svg>
+
+      <div class="rack" id="signalRack">
+        <section class="block" id="block-oscA">
+          <h3 class="block-title">OSC A <span class="tip">音の素材を作る</span></h3>
+          <div class="controls" id="controls-oscA"></div>
+          <div class="scope-label"><span>OSC出口: 波形</span><span>スペクトル</span></div>
+          <div class="scopes">
+            <canvas id="scope-osc-wave"></canvas>
+            <canvas id="scope-osc-spec"></canvas>
+          </div>
+        </section>
+        <div class="pipe"><div class="flow"></div></div>
+        <section class="block" id="block-filter">
+          <h3 class="block-title">FILTER <span class="tip">倍音を削る</span></h3>
+          <div class="controls" id="controls-filter"></div>
+          <div class="scope-label"><span>FILTER出口: 波形</span><span>スペクトル</span></div>
+          <div class="scopes">
+            <canvas id="scope-filter-wave"></canvas>
+            <canvas id="scope-filter-spec"></canvas>
+          </div>
+        </section>
+        <div class="pipe"><div class="flow"></div></div>
+        <section class="block" id="block-amp">
+          <h3 class="block-title">AMP <span class="tip">音量の時間変化</span></h3>
+          <div class="controls"><div class="param" style="width:auto"><div class="p-label">ENV1が音量を制御（固定配線）</div></div></div>
+          <div class="scope-label"><span>AMP出口: 波形</span></div>
+          <div class="scopes">
+            <canvas id="scope-amp-wave"></canvas>
+          </div>
+        </section>
+        <div class="pipe"><div class="flow"></div></div>
+        <section class="block" id="block-out">
+          <h3 class="block-title">OUT <span class="tip">出口</span></h3>
+          <div class="controls" id="controls-master"></div>
+          <div class="scope-label"><span>レベル</span></div>
+          <div class="scopes">
+            <canvas id="scope-out-meter"></canvas>
+          </div>
+          <div class="ph-text" style="font-size:10px; color: var(--text-faint);">FX（歪み/ディレイ/リバーブ）は Phase 1.5 で追加予定</div>
+        </section>
+      </div>
+
+      <div class="rack" id="modRack">
+        <section class="block" id="block-ampEnv">
+          <div>
+            <h3 class="block-title">ENV1 → AMP <span class="tip">固定配線</span></h3>
+            <div class="controls" id="controls-ampEnv"></div>
+          </div>
+          <div class="env-canvas-wrap">
+            <div class="scope-label"><span>エンベロープの形と現在位置</span></div>
+            <canvas id="env-curve"></canvas>
+          </div>
+        </section>
+        <section class="block" id="block-lfo1">
+          <div>
+            <h3 class="block-title">LFO1 <span class="tip">周期的に揺らす</span></h3>
+            <div class="controls" id="controls-lfo1"></div>
+          </div>
+          <div class="mod-assign">
+            <button class="assign-btn" id="assignBtn" type="button">🎯 ノブに割り当てる</button>
+            <div class="assigned" id="assignedList"></div>
+            <div style="font-size:10.5px; color: var(--text-faint); line-height:1.5;">
+              割当先のノブは外周のリングが揺れの範囲を示し、点が実際の変調位置を動きます（Serum/Vitalのモッドリングと同じ記法）
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div id="readout">
+        <span class="ro-badge">今なにが起きた？</span>
+        <div class="ro-body">
+          <div class="ro-action" id="roAction">鍵盤を弾いてみよう</div>
+          <div class="ro-detail" id="roDetail">音が出たらノブを回すと、ここに「何をしたか・音がどうなるか・どこを見るか」が表示されます。PCキーボード（A W S E D…）でも演奏できます。</div>
+        </div>
+      </div>
+
+      <div id="kbWrap">
+        <svg id="kb"></svg>
+        <div class="kb-hint">クリック/タッチで演奏 ・ PCキー: A W S E D F T G Y H U J K … ・ Z/X でオクターブ移動 ・ ドラッグで音を滑らせられます</div>
+      </div>
+    </main>
+
+    <footer>
+      <span class="lg-audio">━▶ 音声の流れ</span>
+      <span class="lg-mod">〜▶ モジュレーション（揺れ）</span>
+      <span>ノブ: 縦ドラッグで変更 / Shift+ドラッグで微調整 / ホイール / ダブルクリックで初期値</span>
+    </footer>
+  </div>
+
+  <div id="bubble" hidden></div>
+
+  <script src="content-params.js"></script>
+  <script src="wavetables.js"></script>
+  <script src="mod-engine.js"></script>
+  <script src="describe-engine.js"></script>
+  <script src="synth-engine.js"></script>
+  <script src="viz.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
