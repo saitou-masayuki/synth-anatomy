@@ -1,4 +1,4 @@
-# シンセ解剖図（Synth Anatomy）
+# シンセマスター（旧称: シンセ解剖図 / リポジトリ名 synth-anatomy）
 
 **公開URL: https://synth-anatomy.pages.dev/**
 

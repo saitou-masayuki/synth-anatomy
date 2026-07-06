@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#12141A">
-  <title>シンセ解剖図 — 信号の流れが見えるブラウザシンセ</title>
+  <title>シンセマスター — 信号の流れが見えるブラウザシンセ</title>
   <meta name="description" content="OSC→フィルター→アンプの信号フロー図そのものがUIのブラウザシンセ。波形・スペクトル・モジュレーションが音と同期して見え、ソフトシンセのパラメーターの繋がりを体感して学べます。">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon-192.png">
@@ -17,7 +17,7 @@
   <div class="app">
     <header class="bar">
       <div class="bar-left">
-        <div class="brand">シンセ解剖図</div>
+        <div class="brand">シンセマスター</div>
         <span class="view-tabs nav-tabs" id="viewTabs">
           <button id="viewPlay" type="button">さわる</button>
           <button id="viewMake" type="button">つくる<span class="tab-sub" id="progressMake"></span></button>
@@ -84,7 +84,6 @@
           <div class="scopes">
             <canvas id="scope-out-meter"></canvas>
           </div>
-          <div class="ph-text" style="font-size:10px; color: var(--text-faint);">FX（歪み/ディレイ/リバーブ）は Phase 1.5 で追加予定</div>
         </section>
       </div>
 
