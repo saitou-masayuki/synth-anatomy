@@ -29,10 +29,13 @@ test('三角LFO: 0→1→0→-1→0 の往復', () => {
   assert.ok(Math.abs(lfoValue('tri', 0.75, 1) + 1) < 1e-9);
 });
 
-test('ノコギリLFO: -1から+1へ上昇して戻る', () => {
-  assert.ok(Math.abs(lfoValue('saw', 0, 1) + 1) < 1e-9);
-  assert.ok(Math.abs(lfoValue('saw', 0.5, 1)) < 1e-9);
-  assert.ok(lfoValue('saw', 0.99, 1) > 0.9);
+test('ノコギリLFO: Web AudioのOscillatorNodeと同じ位相規約（0始まり・前半で+1へ・後半は-1から0へ）', () => {
+  // 音の実体（OscillatorNode sawtooth）と可視化ミラーの位相を一致させるため、
+  // Web Audio仕様の 2*(φ - floor(φ + 0.5)) に合わせる
+  assert.ok(Math.abs(lfoValue('saw', 0, 1)) < 1e-9);
+  assert.ok(lfoValue('saw', 0.49, 1) > 0.9);
+  assert.ok(Math.abs(lfoValue('saw', 0.5, 1) + 1) < 1e-9);
+  assert.ok(Math.abs(lfoValue('saw', 0.75, 1) + 0.5) < 1e-9);
 });
 
 test('矩形LFO: 前半+1・後半-1', () => {

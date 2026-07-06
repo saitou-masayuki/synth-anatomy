@@ -17,7 +17,9 @@ function lfoValue(shape, t, rateHz) {
       if (phase < 0.75) return 2 - 4 * phase;
       return 4 * phase - 4;
     case 'saw':
-      return 2 * phase - 1;
+      // Web Audio仕様の sawtooth = 2*(φ - floor(φ + 0.5)) と同位相
+      // （音の実体OscillatorNodeと可視化ミラーを一致させる）
+      return 2 * (phase - Math.floor(phase + 0.5));
     case 'square':
       return phase < 0.5 ? 1 : -1;
     case 'sh': {
