@@ -218,7 +218,11 @@ body.simple .param[data-adv="1"].has-mod { display: flex; }
 body.simple .param[data-adv="1"].lesson-required { display: flex; }
 
 /* お手本試聴中はノブ操作をロックする（エンジンのパッチが一時的にお手本に差し替わるため） */
-body.audition-lock #signalRack, body.audition-lock #modRack { pointer-events: none; opacity: 0.55; }
+/* #lessonPanel（答え合わせ/ヒントボタン）も対象に含める。再生中はエンジンのパッチが
+   お手本に一時差し替わっているため、ここを押すと誤判定・誤ヒントが生成されてしまう */
+body.audition-lock #signalRack, body.audition-lock #modRack, body.audition-lock #lessonPanel {
+  pointer-events: none; opacity: 0.55;
+}
 
 /* ---- レッスンパネル（つくる: 診断チャレンジ） ---- */
 .nav-tabs button { font-weight: 600; padding: 6px 16px; }
@@ -320,7 +324,6 @@ footer .lg-mod { color: var(--mod-line); }
   .scopes canvas { height: 56px; }
   #kb { height: 92px; }
   .lesson-cards { grid-template-columns: 1fr; }
-  .quiz-choices { grid-template-columns: 1fr; }
   #readout { flex-direction: column; gap: 6px; }
   #readout .ro-badge { align-self: flex-start; }
 }

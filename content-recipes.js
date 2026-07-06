@@ -55,7 +55,8 @@ var RECIPES = [
     id: 'tremolo',
     title: 'トレモロ',
     goal: '音量が周期的に揺れる、ゆらゆらした音',
-    difficulty: 1, order: 3,
+    // 関わるブロックが5つ・配線も必須で、wobble/vibrato-leadと同等の複雑さのため2（ふつう）に統一
+    difficulty: 2, order: 3,
     audition: { notes: [64, 60, 57], dur: 1.0 },
     init: {},
     target: {
@@ -85,7 +86,7 @@ var RECIPES = [
       'mod1.src': 'lfo1', 'mod1.dst': 'filter.cutoff',
       'lfo1.rateHz': 3, 'mod1.amt': 0.6, 'ampEnv.sustain': 1,
     },
-    approach: 'フィルターが自動で動いているような揺れがないか聴いてみましょう',
+    approach: '音の明るさが、周期的に開いたり閉じたりしていないか聴いてみましょう',
     blockHints: {
       oscA: 'オクターブを下げて、ベースの音域にしてみて',
       filter: 'カットオフを大胆に下げて、レゾナンスも上げてみて',

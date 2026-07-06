@@ -313,6 +313,12 @@ const ASSIGN_KNOB_TO_DEST = {
   'oscA.level': 'oscA.level',
   'oscA.fine': 'oscA.pitch',
 };
+// 逆引き（変調先の値 → 実際にクリックするノブのparamId）。
+// レシピのtargetが持つのは'mod1.dst'の値（例: 'oscA.pitch'）であり、
+// 実際に操作が必要な実ノブ（'oscA.fine'）はtargetのキーには現れないため、
+// かんたん表示での表示判定（lessonRequiredParamIds）にはこの逆引きが要る
+const DEST_TO_ASSIGN_KNOB = {};
+for (const [knobParam, dest] of Object.entries(ASSIGN_KNOB_TO_DEST)) DEST_TO_ASSIGN_KNOB[dest] = knobParam;
 
 function enterAssignMode() {
   document.body.classList.add('assign-mode');
@@ -746,6 +752,16 @@ function markLessonRequiredParams(ids) {
   }
 }
 
+// targetのキーに加えて、mod1.dstの値に対応する実ノブ（割当時にクリックする対象）も含める。
+// これが無いと、かんたん表示では配線先のノブ（oscA.level/oscA.fine等）が非表示のままになり、
+// ヒントの通りに操作しようとしても物理的にクリックできず詰んでしまう
+function lessonRequiredParamIds(target) {
+  const ids = new Set(Object.keys(target));
+  const destKnob = DEST_TO_ASSIGN_KNOB[target['mod1.dst']];
+  if (destKnob) ids.add(destKnob);
+  return [...ids];
+}
+
 // 試聴（お手本/いまの音）を中断し、UIロックも解除する
 function stopAudition() {
   SynthEngine.stopPhrase();
@@ -902,21 +918,12 @@ function renderMake(body) {
   actions.appendChild(btnBack);
   body.appendChild(actions);
 
-  // 答え合わせ（いつでも押せる。ブロック単位のズレ件数だけを返し、パラメーター名や数値は明かさない）
-  const checkRow = el('div', 'check-row');
-  const checkBtn = el('button', 'check-btn', '答え合わせ');
-  checkBtn.type = 'button';
-  checkBtn.disabled = lesson.done;
-  checkBtn.addEventListener('click', doCheck);
-  const feedback = el('span', 'check-feedback');
-  feedback.innerHTML = lesson.done
-    ? '<span class="ok">ズレなし</span>'
-    : (lesson.mismatch === null ? 'まだ答え合わせをしていません' : escapeHtml(mismatchText(lesson.mismatch)));
-  checkRow.appendChild(checkBtn);
-  checkRow.appendChild(feedback);
-  body.appendChild(checkRow);
-
   if (lesson.done) {
+    // 完成後も自由にノブを動かしてよい（できた音はそのまま使える）ため、
+    // ここで近さ枠・要求パラメーター表示は解除する。答え合わせの結果は
+    // 「できあがり」の見出しで既に伝わっているので、以後の操作で古い
+    // 「ズレなし」表示が実態と食い違ったまま残ることのないよう表示しない
+    clearProximityFrames();
     markLessonRequiredParams([]);
     const sweep = el('div', 'sweep-line run');
     sweep.appendChild(el('div', 'sweep-fill'));
@@ -943,7 +950,18 @@ function renderMake(body) {
     return;
   }
 
-  markLessonRequiredParams(Object.keys(r.target));
+  markLessonRequiredParams(lessonRequiredParamIds(r.target));
+
+  // 答え合わせ（いつでも押せる。ブロック単位のズレ件数だけを返し、パラメーター名や数値は明かさない）
+  const checkRow = el('div', 'check-row');
+  const checkBtn = el('button', 'check-btn', '答え合わせ');
+  checkBtn.type = 'button';
+  checkBtn.addEventListener('click', doCheck);
+  const feedback = el('span', 'check-feedback',
+    lesson.mismatch === null ? 'まだ答え合わせをしていません' : mismatchText(lesson.mismatch));
+  checkRow.appendChild(checkBtn);
+  checkRow.appendChild(feedback);
+  body.appendChild(checkRow);
 
   const hintArea = el('div', 'hint-area');
   const hintBtn = el('button', 'hint-btn', hintButtonLabel());
@@ -992,7 +1010,9 @@ function hintTextAt(r, levelIdx) {
 }
 
 function revealNextHint() {
-  if (!lesson.recipe || lesson.hints.length >= 3) return;
+  // CSSのpointer-events:noneに加え、二重の安全策としてJS側でもガードする
+  // （お手本再生中はエンジンのパッチが一時的に差し替わっており、正しい判定ができない）
+  if (!lesson.recipe || lesson.hints.length >= 3 || SynthEngine.auditioning) return;
   resetStallTimer();
   const levelIdx = lesson.hints.length;
   lesson.hints.push({ label: HINT_LABELS[levelIdx], text: hintTextAt(lesson.recipe, levelIdx) });
@@ -1000,7 +1020,9 @@ function revealNextHint() {
 }
 
 function doCheck() {
-  if (!lesson.recipe || lesson.done) return;
+  // CSSのpointer-events:noneに加え、二重の安全策としてJS側でもガードする
+  // （お手本再生中はエンジンのパッチが一時的に差し替わっており、正しい判定ができない）
+  if (!lesson.recipe || lesson.done || SynthEngine.auditioning) return;
   resetStallTimer();
   const off = currentMismatchBlocks();
   lesson.mismatch = off;
