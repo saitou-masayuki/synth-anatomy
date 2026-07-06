@@ -20,8 +20,8 @@
         <div class="brand">シンセ解剖図</div>
         <span class="view-tabs nav-tabs" id="viewTabs">
           <button id="viewPlay" type="button">さわる</button>
-          <button id="viewMake" type="button">つくる</button>
-          <button id="viewEar" type="button">きく</button>
+          <button id="viewMake" type="button">つくる<span class="tab-sub" id="progressMake"></span></button>
+          <button id="viewEar" type="button">きく<span class="tab-sub" id="progressEar"></span></button>
         </span>
       </div>
       <div class="bar-right">
@@ -36,8 +36,16 @@
       </div>
     </header>
 
+    <div id="modeDesc"></div>
+
     <main id="main">
       <svg id="overlay" aria-hidden="true"></svg>
+
+      <div id="introBanner" hidden>
+        <span id="introText">はじめての方へ: まずは「つくる」で、お手本どおりにプラックの音を作ってみるのがおすすめです。</span>
+        <button class="text-btn" id="introGo" type="button">つくるを開く</button>
+        <button class="text-btn" id="introClose" type="button">閉じる</button>
+      </div>
 
       <div class="rack" id="signalRack">
         <section class="block" id="block-oscA">

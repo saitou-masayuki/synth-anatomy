@@ -376,19 +376,28 @@ var Viz = (() => {
 
   // ---- スコープ枠のパルス点灯（説明パネルの「どこを見るか」との連動） ----
 
+  const SCOPE_MAP = {
+    oscA: ['scope-osc-wave', 'scope-osc-spec'],
+    filter: ['scope-filter-wave', 'scope-filter-spec'],
+    ampEnv: ['scope-amp-wave'],
+    master: ['scope-out-meter'],
+  };
+
   function pulseScope(block) {
-    const map = {
-      oscA: ['scope-osc-wave', 'scope-osc-spec'],
-      filter: ['scope-filter-wave', 'scope-filter-spec'],
-      ampEnv: ['scope-amp-wave'],
-      master: ['scope-out-meter'],
-    };
-    for (const id of map[block] || []) {
+    for (const id of SCOPE_MAP[block] || []) {
       const el = document.getElementById(id);
       if (!el) continue;
       el.classList.remove('pulse');
       void el.offsetWidth; // アニメーション再始動のためのリフロー
       el.classList.add('pulse');
+    }
+  }
+
+  // ドラッグ中の「触っているノブ → 変化するスコープ」の対応を枠の強調で示す
+  function setScopeActive(block, on) {
+    for (const id of SCOPE_MAP[block] || []) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('active', on);
     }
   }
 
@@ -449,6 +458,7 @@ var Viz = (() => {
     snapshotGhosts,
     releaseGhosts,
     pulseScope,
+    setScopeActive,
     set onMirror(fn) { onMirror = fn; },
   };
 })();

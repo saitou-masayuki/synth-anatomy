@@ -61,6 +61,24 @@ select:hover, .icon-btn:hover, button.text-btn:hover { color: var(--text); borde
 }
 .view-tabs button.on { background: var(--accent-dark); color: var(--accent-text); }
 
+/* ---- モード説明ストリップとタブ進捗 ---- */
+.view-tabs .tab-sub {
+  font-size: 10px; color: var(--text-faint); margin-left: 6px; font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.view-tabs button.on .tab-sub { color: var(--accent-soft); }
+#modeDesc {
+  font-size: 11.5px; color: var(--text-dim); padding: 7px 4px 0; line-height: 1.5;
+}
+
+/* ---- 初回案内バナー（一度閉じたら出さない） ---- */
+#introBanner {
+  background: var(--accent-dark); border: 1px solid var(--accent); border-radius: 10px;
+  padding: 10px 14px; font-size: 12.5px; color: var(--accent-text);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+#introBanner span { flex: 1; min-width: 200px; line-height: 1.5; }
+
 /* ---- ラック（解剖図本体） ---- */
 main { position: relative; flex: 1; display: flex; flex-direction: column; gap: 10px; padding-top: 12px; }
 #overlay {
@@ -134,6 +152,8 @@ body.assign-mode .knob.assignable { opacity: 1; cursor: pointer; animation: brea
 .scope-label { font-size: 9px; color: var(--text-faint); letter-spacing: 0.5px; margin-bottom: -4px; display: flex; justify-content: space-between; }
 .scopes canvas.pulse { animation: scope-pulse 0.6s ease-out 2; }
 @keyframes scope-pulse { 0% { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); } 100% { border-color: var(--border); box-shadow: none; } }
+/* ドラッグ中: 触っているノブに対応するスコープを強調し、「触った→ここが変わる」を結びつける */
+.scopes canvas.active { border-color: var(--accent); box-shadow: 0 0 7px 1px var(--accent-dark); }
 
 /* ---- モジュレーターラック ---- */
 #modRack .block { flex-direction: row; align-items: flex-start; gap: 14px; }
@@ -160,6 +180,9 @@ body.assign-mode button.assign-btn { background: var(--mod-line); color: var(--b
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
   padding: 10px 16px; display: flex; gap: 14px; align-items: baseline; min-height: 58px;
 }
+/* 説明が更新された瞬間の短いフラッシュ（「何か変わった」への気づきを助ける） */
+#readout.flash { animation: readout-flash 0.5s ease-out 1; }
+@keyframes readout-flash { 0% { border-color: var(--accent); background: var(--accent-dark); } 100% { border-color: var(--border); background: var(--panel); } }
 #readout .ro-badge {
   flex: none; font-size: 10px; letter-spacing: 1px; color: var(--accent);
   border: 1px solid var(--accent); border-radius: 10px; padding: 2px 8px; white-space: nowrap;
@@ -263,8 +286,9 @@ footer .lg-mod { color: var(--mod-line); }
   #signalRack .pipe { display: none; }
   #modRack { grid-template-columns: 1fr; }
   /* ノブ列と説明/スコープを横並びのままにすると、幅が足りず日本語が1文字ずつ折り返される。
-     縦積みにして、各要素が横幅いっぱいを使えるようにする */
-  #modRack .block { flex-direction: column; }
+     縦積みにして、各要素が横幅いっぱいを使えるようにする
+     （align-items: flex-start のままだと列方向では子の幅が内容分に縮むため stretch に戻す） */
+  #modRack .block { flex-direction: column; align-items: stretch; }
 }
 
 /* スマホ幅: 2列でもまだ窮屈なので1列に落とし、ノブや鍵盤も少し小さくする */

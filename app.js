@@ -23,6 +23,7 @@ if (!['play', 'make', 'ear'].includes(settings.view)) settings.view = 'play';
 for (const key of ['quizStats', 'quizBest', 'recipesDone']) {
   if (!settings[key] || typeof settings[key] !== 'object' || Array.isArray(settings[key])) settings[key] = {};
 }
+settings.introSeen = settings.introSeen === true;
 
 let saveTimer = null;
 function saveSettings() {
@@ -218,8 +219,9 @@ function attachKnobEvents(knob, def) {
     const patch = SynthEngine.getPatch();
     startValue = patch[def.id];
     curNorm = normParam(def.id, startValue);
-    knob.setPointerCapture(e.pointerId);
     Viz.snapshotGhosts();
+    Viz.setScopeActive(def.block, true); // 触っている間、対応するスコープの枠を強調する
+    try { knob.setPointerCapture(e.pointerId); } catch {} // 環境により失敗し得るが、ドラッグ自体は続行できる
     e.preventDefault();
   });
 
@@ -242,6 +244,7 @@ function attachKnobEvents(knob, def) {
     dragging = false;
     bubble.hidden = true;
     Viz.releaseGhosts();
+    Viz.setScopeActive(def.block, false);
     const cur = SynthEngine.getPatch()[def.id];
     if (cur !== startValue) {
       updateReadout(def.id, startValue, cur);
@@ -283,6 +286,15 @@ function updateReadout(id, prev, next) {
   if (!d) return;
   $('roAction').textContent = d.action;
   $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">見る場所: ${escapeHtml(d.watch)}</span>`;
+  flashReadout();
+}
+
+// 説明パネルの更新を短いフラッシュで知らせる（アニメーションを毎回リスタートさせる）
+function flashReadout() {
+  const ro = $('readout');
+  ro.classList.remove('flash');
+  void ro.offsetWidth;
+  ro.classList.add('flash');
 }
 
 function escapeHtml(s) {
@@ -678,6 +690,25 @@ const lesson = {
 
 const BLOCK_LABELS = { oscA: 'OSC', filter: 'FILTER', ampEnv: 'ENV1', lfo1: 'LFO1', mod: 'MOD', master: 'OUT' };
 const DIFFICULTY_LABELS = { 1: 'やさしい', 2: 'ふつう', 3: 'むずかしい' };
+const MODE_DESCRIPTIONS = {
+  play: 'さわる — 自由に音作りをする場所。鍵盤で鳴らしながらノブを回すと、下の説明パネルが解説します',
+  make: 'つくる — お手本の音を、手順どおりにノブを動かして再現する練習',
+  ear: 'きく — AとBの聞き分けで、音の変化を聴き取る耳を鍛えるテスト',
+};
+
+// タブに進捗を表示する（3つのモードのつながりを常に見せる）
+function updateNavProgress() {
+  const doneCount = RECIPES.filter((r) => settings.recipesDone[r.id]).length;
+  $('progressMake').textContent = `${doneCount}/${RECIPES.length}`;
+  const passed = QUIZ_LEVELS.filter((lv) => (settings.quizBest[lv.id] ?? -1) >= lv.passScore).length;
+  $('progressEar').textContent = `${passed}/${QUIZ_LEVELS.length}`;
+}
+
+// 初回だけ「つくる」への案内バナーを出す（閉じるか、レシピを1つでも完成したら出さない）
+function updateIntroBanner() {
+  const anyDone = RECIPES.some((r) => settings.recipesDone[r.id]);
+  $('introBanner').hidden = !(lesson.view === 'play' && !settings.introSeen && !anyDone);
+}
 
 function paramLabel(id) {
   const def = paramById(id);
@@ -741,6 +772,8 @@ function applyView(view) {
   for (const [id, v] of [['viewPlay', 'play'], ['viewMake', 'make'], ['viewEar', 'ear']]) {
     $(id).classList.toggle('on', view === v);
   }
+  $('modeDesc').textContent = MODE_DESCRIPTIONS[view] || '';
+  updateIntroBanner();
   $('lessonPanel').hidden = view === 'play';
   renderLesson();
 }
@@ -811,9 +844,29 @@ function renderMake(body) {
     markLessonRequiredParams([]);
     settings.recipesDone[r.id] = true;
     saveSettings();
+    updateNavProgress();
     const done = el('div', 'lesson-done');
     done.appendChild(el('div', 'ld-title', 'できあがり'));
     done.appendChild(el('div', null, 'お手本と聴き比べてみましょう。この音は「さわる」に戻ってそのまま使えますし、「音を保存」もできます。'));
+    // 次にやることへの導線（モードが独立して感じられないように）
+    const nav = el('div', 'lesson-actions');
+    nav.style.justifyContent = 'center';
+    const nextRecipe = RECIPES.slice().sort((a, b) => a.order - b.order).find((x) => !settings.recipesDone[x.id]);
+    if (nextRecipe) {
+      const nextBtn = el('button', 'primary', `次のテストへ（${nextRecipe.title}）`);
+      nextBtn.type = 'button';
+      nextBtn.addEventListener('click', () => startRecipe(nextRecipe));
+      nav.appendChild(nextBtn);
+    }
+    const playBtn = el('button', null, 'さわるで続ける');
+    playBtn.type = 'button';
+    playBtn.addEventListener('click', () => applyView('play'));
+    nav.appendChild(playBtn);
+    const earBtn = el('button', null, 'きくで耳を試す');
+    earBtn.type = 'button';
+    earBtn.addEventListener('click', () => applyView('ear'));
+    nav.appendChild(earBtn);
+    done.appendChild(nav);
     body.appendChild(done);
     return;
   }
@@ -906,14 +959,26 @@ function renderEar(body) {
     done.appendChild(el('div', null, `${quiz.level.name}: ${quiz.score} / ${quiz.level.questionCount} 問正解（合格ラインは${quiz.level.passScore}問）`));
     const actions = el('div', 'lesson-actions');
     actions.style.justifyContent = 'center';
-    const again = el('button', 'primary', 'もう一度挑戦');
+    // 合格したら次のレベルへ、不合格ならもう一度が主導線
+    const nextLevel = QUIZ_LEVELS[QUIZ_LEVELS.indexOf(quiz.level) + 1];
+    if (passed && nextLevel) {
+      const nextBtn = el('button', 'primary', `次のレベルへ（${nextLevel.name}）`);
+      nextBtn.type = 'button';
+      nextBtn.addEventListener('click', () => startQuiz(nextLevel));
+      actions.appendChild(nextBtn);
+    }
+    const again = el('button', passed && nextLevel ? null : 'primary', 'もう一度挑戦');
     again.type = 'button';
     again.addEventListener('click', () => startQuiz(quiz.level));
     const back = el('button', null, 'レベル一覧へ');
     back.type = 'button';
     back.addEventListener('click', () => { lesson.quiz = null; renderLesson(); });
+    const makeBtn = el('button', null, 'つくるで音作りを試す');
+    makeBtn.type = 'button';
+    makeBtn.addEventListener('click', () => applyView('make'));
     actions.appendChild(again);
     actions.appendChild(back);
+    actions.appendChild(makeBtn);
     done.appendChild(actions);
     body.appendChild(done);
     return;
@@ -1011,6 +1076,7 @@ function answerQuiz(choice, choicesEl) {
       const best = settings.quizBest[quiz.level.id];
       if (best === undefined || quiz.score > best) settings.quizBest[quiz.level.id] = quiz.score;
       saveSettings();
+      updateNavProgress();
       renderLesson();
     } else {
       nextQuizQuestion();
@@ -1104,6 +1170,17 @@ $('themeBtn').addEventListener('click', () => applyTheme(settings.theme === 'dar
 $('viewPlay').addEventListener('click', () => applyView('play'));
 $('viewMake').addEventListener('click', () => applyView('make'));
 $('viewEar').addEventListener('click', () => applyView('ear'));
+$('introGo').addEventListener('click', () => {
+  settings.introSeen = true;
+  saveSettings();
+  applyView('make');
+});
+$('introClose').addEventListener('click', () => {
+  settings.introSeen = true;
+  saveSettings();
+  updateIntroBanner();
+});
+updateNavProgress();
 
 applyMode(settings.mode);
 applyTheme(settings.theme);
