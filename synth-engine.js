@@ -410,6 +410,42 @@ var SynthEngine = (() => {
     return resolveModRoutes(patch).find((r) => r.kind === 'control' && r.dst === 'oscA.wtPos') || null;
   }
 
+  // ---- 試聴フレーズ再生（レシピの目標音・クイズのA/B聴き比べ用） ----
+
+  let phraseTimers = [];
+  let phraseNotes = new Set();
+
+  function stopPhrase() {
+    for (const t of phraseTimers) clearTimeout(t);
+    phraseTimers = [];
+    for (const n of phraseNotes) noteOff(n);
+    phraseNotes.clear();
+  }
+
+  // audition: { notes: MIDIノート番号列, dur: 1音の長さ秒 }
+  // opts.patch: 一時的に差し替えるパッチ（再生後に元へ戻す）。opts.onDone: 完了コールバック
+  function playPhrase(audition, opts) {
+    if (!ensureAudio()) return;
+    stopPhrase();
+    const o = opts || {};
+    const restore = o.patch ? getPatch() : null;
+    if (o.patch) applyPatch(o.patch);
+    const dur = audition.dur;
+    const gap = 0.08;
+    audition.notes.forEach((note, i) => {
+      phraseTimers.push(setTimeout(() => { phraseNotes.add(note); noteOn(note); }, i * (dur + gap) * 1000));
+      phraseTimers.push(setTimeout(() => { phraseNotes.delete(note); noteOff(note); }, (i * (dur + gap) + dur) * 1000));
+    });
+    // リリースの尾が鳴り終わってからパッチを戻す（戻しが早いと余韻の音色が変わってしまう）
+    const tail = Math.min(2, (o.patch || patch)['ampEnv.release'] || 0.3);
+    const total = (audition.notes.length * (dur + gap) + tail) * 1000 + 60;
+    phraseTimers.push(setTimeout(() => {
+      if (restore) applyPatch(restore);
+      if (o.onDone) o.onDone();
+    }, total));
+    return total;
+  }
+
   function applyPatch(dict) {
     for (const [id, v] of Object.entries(dict)) applyParam(id, v);
   }
@@ -470,6 +506,8 @@ var SynthEngine = (() => {
     ensureAudio,
     noteOn,
     noteOff,
+    playPhrase,
+    stopPhrase,
     applyParam,
     applyPatch,
     getPatch,

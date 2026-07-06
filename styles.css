@@ -185,6 +185,57 @@ body.simple [data-adv="1"] { display: none; }
 /* ただし変調が刺さっているノブは表示する（変調線の行き先が消えると学習にならない） */
 body.simple .param[data-adv="1"].has-mod { display: flex; }
 
+/* ---- レッスンパネル（つくる/きく） ---- */
+.nav-tabs button { font-weight: 600; padding: 6px 16px; }
+#lessonPanel { padding: 14px 16px; }
+.lesson-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.lesson-head h2 { margin: 0; font-size: 15px; }
+.lesson-head .goal { font-size: 12px; color: var(--text-dim); }
+.lesson-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.lesson-card {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; cursor: pointer; text-align: left; font-family: inherit; color: var(--text);
+}
+.lesson-card:hover { border-color: var(--accent); }
+.lesson-card .lc-title { font-size: 14px; font-weight: 700; margin-bottom: 3px; }
+.lesson-card .lc-goal { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+.lesson-card .lc-meta { font-size: 10.5px; color: var(--text-faint); margin-top: 6px; }
+.lesson-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.lesson-actions button, .step-card button, .quiz-actions button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px; padding: 8px 14px; cursor: pointer; font-family: inherit;
+}
+.lesson-actions button:hover, .step-card button:hover, .quiz-actions button:hover { border-color: var(--accent); }
+.lesson-actions button.primary { background: var(--accent-dark); color: var(--accent-text); border-color: var(--accent); }
+.step-list { display: flex; flex-direction: column; gap: 6px; }
+.step-card { border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; font-size: 12px; color: var(--text-faint); }
+.step-card.done { opacity: 0.55; }
+.step-card.done .st-title::after { content: '  済'; color: var(--ok); font-weight: 700; }
+.step-card.current { border-color: var(--accent); background: var(--panel-2); color: var(--text); }
+.step-card .st-title { font-weight: 700; font-size: 13px; }
+.step-card .st-text { margin-top: 4px; line-height: 1.6; }
+.step-card .st-listen { margin-top: 4px; color: var(--ok); font-size: 11.5px; }
+.step-card.current .st-num { color: var(--accent); }
+.lesson-done { text-align: center; padding: 14px 0; }
+.lesson-done .ld-title { font-size: 16px; font-weight: 700; color: var(--ok); margin-bottom: 6px; }
+
+/* きく（クイズ）モード中はノブ操作をロックする（A/Bの音を保つため。スコープは動き続ける） */
+body.quiz-lock #signalRack, body.quiz-lock #modRack { pointer-events: none; opacity: 0.55; }
+.quiz-status { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+.quiz-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.quiz-actions button.ab { font-size: 14px; font-weight: 700; padding: 12px 22px; }
+.quiz-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-top: 10px; }
+.quiz-choices button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px; padding: 10px 12px; cursor: pointer; font-family: inherit;
+}
+.quiz-choices button:hover { border-color: var(--accent); }
+.quiz-choices button.correct { border-color: var(--ok); color: var(--ok); font-weight: 700; }
+.quiz-choices button.wrong { border-color: var(--ng); color: var(--ng); }
+.quiz-feedback { font-size: 13px; margin-top: 10px; line-height: 1.6; }
+.quiz-feedback .ok { color: var(--ok); font-weight: 700; }
+.quiz-feedback .ng { color: var(--ng); font-weight: 700; }
+
 /* ---- フッター ---- */
 footer { font-size: 10.5px; color: var(--text-faint); padding: 6px 4px 0; display: flex; gap: 18px; flex-wrap: wrap; }
 footer .lg-audio { color: var(--audio-line); }

@@ -19,6 +19,10 @@ if (!settings.presets || typeof settings.presets !== 'object' || Array.isArray(s
 if (settings.patch !== null && (typeof settings.patch !== 'object' || Array.isArray(settings.patch))) settings.patch = null;
 if (settings.theme !== 'light' && settings.theme !== 'dark') settings.theme = 'dark';
 if (settings.mode !== 'simple' && settings.mode !== 'full') settings.mode = 'simple';
+if (!['play', 'make', 'ear'].includes(settings.view)) settings.view = 'play';
+for (const key of ['quizStats', 'quizBest', 'recipesDone']) {
+  if (!settings[key] || typeof settings[key] !== 'object' || Array.isArray(settings[key])) settings[key] = {};
+}
 
 let saveTimer = null;
 function saveSettings() {
@@ -144,6 +148,7 @@ function setParam(id, value) {
     updateModRing();
   }
   saveSettings();
+  lessonOnParamChange(id);
 }
 
 function refreshParamVisual(id) {
@@ -273,7 +278,7 @@ function updateReadout(id, prev, next) {
   const d = describeChange(id, prev, next, SynthEngine.getPatch());
   if (!d) return;
   $('roAction').textContent = d.action;
-  $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">👀 ${escapeHtml(d.watch)}</span>`;
+  $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">見る場所: ${escapeHtml(d.watch)}</span>`;
 }
 
 function escapeHtml(s) {
@@ -319,7 +324,7 @@ function assignTo(knobParamId) {
   const destDef = MOD_DESTS.find((d) => d.id === dest);
   const d = describeChange('mod1.dst', 'none', dest, SynthEngine.getPatch());
   $('roAction').textContent = `LFO1 を ${destDef ? destDef.name : dest} に配線しました`;
-  if (d) $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">👀 ${escapeHtml(d.watch)}</span>`;
+  if (d) $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">見る場所: ${escapeHtml(d.watch)}</span>`;
 }
 
 function unassign() {
@@ -656,6 +661,323 @@ function setupPresets() {
   });
 }
 
+// ---------- レッスン（つくる=音作りテスト / きく=聞き取りテスト） ----------
+
+const lesson = {
+  view: null,          // play | make | ear（初期化時にapplyViewが設定する）
+  recipe: null,        // 進行中のレシピ
+  stepIdx: 0,
+  sandboxPatch: null,  // きくモードに入る前の音（戻るときに復元する）
+  quiz: null,          // { level, qIdx, score, q, answered }
+};
+
+const BLOCK_LABELS = { oscA: 'OSC', filter: 'FILTER', ampEnv: 'ENV1', lfo1: 'LFO1', mod: 'MOD', master: 'OUT' };
+const DIFFICULTY_LABELS = { 1: 'やさしい', 2: 'ふつう', 3: 'むずかしい' };
+
+function paramLabel(id) {
+  const def = paramById(id);
+  return def ? `${BLOCK_LABELS[def.block] || def.block}の${def.name}` : id;
+}
+
+// 小さなDOM生成ヘルパー
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function refreshAfterPatchApply() {
+  refreshAllVisuals();
+  renderAssigned();
+  updateModRing();
+  Viz.updateGeometry();
+}
+
+// ---- モード切替 ----
+
+function applyView(view) {
+  const prev = lesson.view;
+  if (prev === view) return;
+  SynthEngine.stopPhrase();
+  exitAssignMode();
+  // きくモードを離れるときは、入る前に作っていた音を復元する
+  if (prev === 'ear' && lesson.sandboxPatch) {
+    SynthEngine.applyPatch(lesson.sandboxPatch);
+    refreshAfterPatchApply();
+    lesson.sandboxPatch = null;
+  }
+  if (prev === 'ear') {
+    lesson.quiz = null;
+    document.body.classList.remove('quiz-lock');
+  }
+  if (view === 'ear') {
+    lesson.sandboxPatch = SynthEngine.getPatch();
+  }
+  lesson.view = view;
+  settings.view = view;
+  saveSettings();
+  for (const [id, v] of [['viewPlay', 'play'], ['viewMake', 'make'], ['viewEar', 'ear']]) {
+    $(id).classList.toggle('on', view === v);
+  }
+  $('lessonPanel').hidden = view === 'play';
+  renderLesson();
+}
+
+function renderLesson() {
+  const body = $('lessonBody');
+  body.innerHTML = '';
+  if (lesson.view === 'make') renderMake(body);
+  if (lesson.view === 'ear') renderEar(body);
+}
+
+// ---- つくる: 音作りテスト（レシピ再現） ----
+
+function renderMake(body) {
+  if (!lesson.recipe) {
+    const head = el('div', 'lesson-head');
+    head.appendChild(el('h2', null, '音作りテスト'));
+    head.appendChild(el('span', 'goal', 'お手本の音を聴いて、手順どおりにノブを動かして再現します。できた音はそのまま使えます。'));
+    body.appendChild(head);
+    const cards = el('div', 'lesson-cards');
+    for (const r of RECIPES.slice().sort((a, b) => a.order - b.order)) {
+      const card = el('button', 'lesson-card');
+      card.type = 'button';
+      card.appendChild(el('div', 'lc-title', r.title));
+      card.appendChild(el('div', 'lc-goal', r.goal));
+      const done = settings.recipesDone[r.id] ? '　完成済み' : '';
+      card.appendChild(el('div', 'lc-meta', `${DIFFICULTY_LABELS[r.difficulty]}・全${r.steps.length}ステップ${done}`));
+      card.addEventListener('click', () => startRecipe(r));
+      cards.appendChild(card);
+    }
+    body.appendChild(cards);
+    return;
+  }
+
+  const r = lesson.recipe;
+  const targetFull = Object.assign(defaultPatch(), r.init, r.target);
+  const head = el('div', 'lesson-head');
+  head.appendChild(el('h2', null, r.title));
+  head.appendChild(el('span', 'goal', r.goal));
+  body.appendChild(head);
+
+  const actions = el('div', 'lesson-actions');
+  const btnTarget = el('button', 'primary', 'お手本の音を聴く');
+  btnTarget.type = 'button';
+  btnTarget.addEventListener('click', () => SynthEngine.playPhrase(r.audition, { patch: targetFull }));
+  const btnCurrent = el('button', null, 'いまの音を聴く');
+  btnCurrent.type = 'button';
+  btnCurrent.addEventListener('click', () => SynthEngine.playPhrase(r.audition));
+  const btnBack = el('button', null, 'テスト一覧へ戻る');
+  btnBack.type = 'button';
+  btnBack.addEventListener('click', () => { lesson.recipe = null; renderLesson(); });
+  actions.appendChild(btnTarget);
+  actions.appendChild(btnCurrent);
+  actions.appendChild(btnBack);
+  body.appendChild(actions);
+
+  if (lesson.stepIdx >= r.steps.length) {
+    settings.recipesDone[r.id] = true;
+    saveSettings();
+    const done = el('div', 'lesson-done');
+    done.appendChild(el('div', 'ld-title', 'できあがり'));
+    done.appendChild(el('div', null, 'お手本と聴き比べてみましょう。この音は「さわる」に戻ってそのまま使えますし、「音を保存」もできます。'));
+    body.appendChild(done);
+    return;
+  }
+
+  const list = el('div', 'step-list');
+  r.steps.forEach((s, i) => {
+    const state = i < lesson.stepIdx ? 'done' : i === lesson.stepIdx ? 'current' : '';
+    const card = el('div', `step-card ${state}`);
+    card.appendChild(el('div', 'st-title', `${i + 1}. ${s.title}`));
+    if (i === lesson.stepIdx) {
+      card.appendChild(el('div', 'st-text', s.text));
+      if (s.listen) card.appendChild(el('div', 'st-listen', `聴きどころ: ${s.listen}`));
+      if (s.auto) {
+        const btn = el('button', null, 'この操作を適用する');
+        btn.type = 'button';
+        btn.style.marginTop = '8px';
+        btn.addEventListener('click', () => {
+          for (const [id, v] of Object.entries(s.params)) setParam(id, v);
+        });
+        card.appendChild(btn);
+      }
+    }
+    list.appendChild(card);
+  });
+  body.appendChild(list);
+}
+
+function startRecipe(r) {
+  SynthEngine.applyPatch(Object.assign(defaultPatch(), r.init));
+  refreshAfterPatchApply();
+  lesson.recipe = r;
+  lesson.stepIdx = recipeNextStep(SynthEngine.getPatch(), r);
+  renderLesson();
+  $('roAction').textContent = `音作りテスト「${r.title}」を開始`;
+  $('roDetail').textContent = 'まず「お手本の音を聴く」で完成形を確認してから、ステップ1に取りかかりましょう。';
+}
+
+// ノブが動くたびに呼ばれ、現在のステップが達成されたら次へ進める
+function lessonOnParamChange() {
+  if (lesson.view !== 'make' || !lesson.recipe) return;
+  const next = recipeNextStep(SynthEngine.getPatch(), lesson.recipe);
+  if (next === lesson.stepIdx) return;
+  const finished = next >= lesson.recipe.steps.length;
+  const advanced = next > lesson.stepIdx;
+  lesson.stepIdx = next;
+  renderLesson();
+  if (finished) {
+    $('roAction').textContent = 'できあがり';
+    $('roDetail').textContent = '「お手本の音を聴く」と「いまの音を聴く」で聴き比べてみましょう。';
+  } else if (advanced) {
+    $('roAction').textContent = 'ステップ完了';
+    $('roDetail').textContent = `次は「${lesson.recipe.steps[next].title}」です。`;
+  }
+}
+
+// ---- きく: 聞き取りテスト（どのノブが変わった？） ----
+
+function renderEar(body) {
+  if (!lesson.quiz) {
+    document.body.classList.remove('quiz-lock');
+    const head = el('div', 'lesson-head');
+    head.appendChild(el('h2', null, '聞き取りテスト'));
+    head.appendChild(el('span', 'goal', 'AとBの音を聴き比べて、どのノブが変わったかを当てます。逃げない耳が育ちます。'));
+    body.appendChild(head);
+    const cards = el('div', 'lesson-cards');
+    for (const lv of QUIZ_LEVELS) {
+      const card = el('button', 'lesson-card');
+      card.type = 'button';
+      card.appendChild(el('div', 'lc-title', lv.name));
+      card.appendChild(el('div', 'lc-goal', lv.desc));
+      const best = settings.quizBest[lv.id];
+      card.appendChild(el('div', 'lc-meta',
+        `全${lv.questionCount}問・${lv.passScore}問正解で合格${best !== undefined ? `　自己ベスト ${best}/${lv.questionCount}` : ''}`));
+      card.addEventListener('click', () => startQuiz(lv));
+      cards.appendChild(card);
+    }
+    body.appendChild(cards);
+    return;
+  }
+
+  const quiz = lesson.quiz;
+
+  if (quiz.qIdx >= quiz.level.questionCount) {
+    const passed = quiz.score >= quiz.level.passScore;
+    const done = el('div', 'lesson-done');
+    done.appendChild(el('div', 'ld-title', passed ? '合格' : 'もう少し'));
+    done.appendChild(el('div', null, `${quiz.level.name}: ${quiz.score} / ${quiz.level.questionCount} 問正解（合格ラインは${quiz.level.passScore}問）`));
+    const actions = el('div', 'lesson-actions');
+    actions.style.justifyContent = 'center';
+    const again = el('button', 'primary', 'もう一度挑戦');
+    again.type = 'button';
+    again.addEventListener('click', () => startQuiz(quiz.level));
+    const back = el('button', null, 'レベル一覧へ');
+    back.type = 'button';
+    back.addEventListener('click', () => { lesson.quiz = null; renderLesson(); });
+    actions.appendChild(again);
+    actions.appendChild(back);
+    done.appendChild(actions);
+    body.appendChild(done);
+    return;
+  }
+
+  const q = quiz.q;
+  body.appendChild(el('div', 'quiz-status',
+    `${quiz.level.name}　問題 ${quiz.qIdx + 1} / ${quiz.level.questionCount}　ここまで ${quiz.score} 問正解`));
+
+  const ab = el('div', 'quiz-actions');
+  const btnA = el('button', 'ab', 'Aの音（もと）');
+  btnA.type = 'button';
+  btnA.addEventListener('click', () => {
+    SynthEngine.applyPatch(q.base);
+    refreshAllVisuals();
+    SynthEngine.playPhrase(QUIZ_BASE_PATCHES[q.baseId].audition);
+  });
+  const btnB = el('button', 'ab', 'Bの音（どこかが変わった）');
+  btnB.type = 'button';
+  btnB.addEventListener('click', () => {
+    SynthEngine.applyPatch(Object.assign({}, q.base, { [q.target]: q.after }));
+    refreshAllVisuals();
+    SynthEngine.playPhrase(QUIZ_BASE_PATCHES[q.baseId].audition);
+  });
+  ab.appendChild(btnA);
+  ab.appendChild(btnB);
+  body.appendChild(ab);
+  body.appendChild(el('div', 'quiz-status', '何度でも聴き比べてOK。変わったのはどのノブ？'));
+
+  const choices = el('div', 'quiz-choices');
+  for (const c of q.choices) {
+    const btn = el('button', null, paramLabel(c));
+    btn.type = 'button';
+    btn.dataset.choice = c;
+    btn.addEventListener('click', () => answerQuiz(c, choices));
+    choices.appendChild(btn);
+  }
+  body.appendChild(choices);
+
+  const fb = el('div', 'quiz-feedback');
+  fb.id = 'quizFeedback';
+  body.appendChild(fb);
+}
+
+function startQuiz(level) {
+  lesson.quiz = { level, qIdx: 0, score: 0, q: null, answered: false };
+  document.body.classList.add('quiz-lock');
+  nextQuizQuestion();
+}
+
+function nextQuizQuestion() {
+  const quiz = lesson.quiz;
+  quiz.q = quizGenQuestion(quiz.level, QUIZ_BASE_PATCHES, Math.random, settings.quizStats);
+  quiz.answered = false;
+  SynthEngine.applyPatch(quiz.q.base);
+  refreshAllVisuals();
+  renderLesson();
+}
+
+function answerQuiz(choice, choicesEl) {
+  const quiz = lesson.quiz;
+  if (quiz.answered) return;
+  quiz.answered = true;
+  const q = quiz.q;
+  const correct = quizJudge(q, choice);
+  // 弱点の記録（正答率が低いパラメーターほど次から出やすくなる）
+  const s = settings.quizStats[q.target] || { seen: 0, correct: 0 };
+  s.seen += 1;
+  if (correct) s.correct += 1;
+  settings.quizStats[q.target] = s;
+  if (correct) quiz.score += 1;
+  saveSettings();
+
+  for (const btn of choicesEl.querySelectorAll('button')) {
+    if (btn.dataset.choice === q.target) btn.classList.add('correct');
+    else if (btn.dataset.choice === choice) btn.classList.add('wrong');
+    btn.disabled = true;
+  }
+  const def = paramById(q.target);
+  const dirText = q.dir === null ? '' : q.dir > 0 ? '（上げた）' : '（下げた）';
+  const fb = $('quizFeedback');
+  fb.innerHTML = `<span class="${correct ? 'ok' : 'ng'}">${correct ? '正解' : '不正解'}</span>　変わったのは「${escapeHtml(paramLabel(q.target))}」${dirText}。${escapeHtml(def.short)}`;
+  const next = el('button', null, quiz.qIdx + 1 >= quiz.level.questionCount ? '結果を見る' : '次の問題へ');
+  next.type = 'button';
+  next.style.marginLeft = '12px';
+  next.addEventListener('click', () => {
+    quiz.qIdx += 1;
+    if (quiz.qIdx >= quiz.level.questionCount) {
+      const best = settings.quizBest[quiz.level.id];
+      if (best === undefined || quiz.score > best) settings.quizBest[quiz.level.id] = quiz.score;
+      saveSettings();
+      renderLesson();
+    } else {
+      nextQuizQuestion();
+    }
+  });
+  fb.appendChild(next);
+}
+
 // ---------- 表示モード（シンプル/フル）とテーマ ----------
 
 function applyMode(mode) {
@@ -738,9 +1060,13 @@ document.addEventListener('pointerdown', (e) => {
 $('modeSimple').addEventListener('click', () => applyMode('simple'));
 $('modeFull').addEventListener('click', () => applyMode('full'));
 $('themeBtn').addEventListener('click', () => applyTheme(settings.theme === 'dark' ? 'light' : 'dark'));
+$('viewPlay').addEventListener('click', () => applyView('play'));
+$('viewMake').addEventListener('click', () => applyView('make'));
+$('viewEar').addEventListener('click', () => applyView('ear'));
 
 applyMode(settings.mode);
 applyTheme(settings.theme);
+applyView(settings.view);
 Viz.init();
 updateModRing();
 
