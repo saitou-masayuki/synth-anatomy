@@ -19,19 +19,17 @@ if (!settings.presets || typeof settings.presets !== 'object' || Array.isArray(s
 if (settings.patch !== null && (typeof settings.patch !== 'object' || Array.isArray(settings.patch))) settings.patch = null;
 if (settings.theme !== 'light' && settings.theme !== 'dark') settings.theme = 'dark';
 if (settings.mode !== 'simple' && settings.mode !== 'full') settings.mode = 'simple';
-if (!['play', 'make', 'ear'].includes(settings.view)) settings.view = 'play';
-for (const key of ['quizStats', 'quizBest', 'recipesDone']) {
-  if (!settings[key] || typeof settings[key] !== 'object' || Array.isArray(settings[key])) settings[key] = {};
-}
+if (!['play', 'make'].includes(settings.view)) settings.view = 'play';
+if (!settings.recipesDone || typeof settings.recipesDone !== 'object' || Array.isArray(settings.recipesDone)) settings.recipesDone = {};
 settings.introSeen = settings.introSeen === true;
 
 let saveTimer = null;
 function saveSettings() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    // きくモード中や試聴（お手本/A・B）の一時パッチは「自分の音」ではないため保存しない。
-    // 保存すると、リロード時に作りかけの音がクイズ用パッチ等で上書きされてしまう
-    if (lesson.view !== 'ear' && !SynthEngine.auditioning) {
+    // 試聴（お手本）中の一時パッチは「自分の音」ではないため保存しない。
+    // 保存すると、リロード時に作りかけの音がお手本パッチで上書きされてしまう
+    if (!SynthEngine.auditioning) {
       settings.patch = SynthEngine.getPatch();
     }
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
@@ -47,7 +45,7 @@ const BLOCK_CONTAINERS = {
   oscA: 'controls-oscA', filter: 'controls-filter', ampEnv: 'controls-ampEnv',
   lfo1: 'controls-lfo1', master: 'controls-master',
 };
-// mod1.src/dst は割当UI（🎯ボタン）経由で操作するため直接は描画しない。amtはLFOブロックに置く
+// mod1.src/dst は割当UI（LFO1をノブにつなぐボタン）経由で操作するため直接は描画しない。amtはLFOブロックに置く
 const HIDDEN_PARAMS = new Set(['mod1.src', 'mod1.dst']);
 
 const knobEls = new Map(); // paramId → { wrap, svg, valueArc, pointer, modRing, modDot, valueText, zeroNorm }
@@ -686,30 +684,33 @@ function setupPresets() {
   });
 }
 
-// ---------- レッスン（つくる=音作りテスト / きく=聞き取りテスト） ----------
+// ---------- つくる: 診断チャレンジ（お手本の音を、聴いて・触って・答え合わせしながら再現する） ----------
 
 const lesson = {
-  view: null,          // play | make | ear（初期化時にapplyViewが設定する）
-  recipe: null,        // 進行中のレシピ
-  stepIdx: 0,
-  sandboxPatch: null,  // きくモードに入る前の音（戻るときに復元する）
-  quiz: null,          // { level, qIdx, score, q, answered }
+  view: null,       // play | make（初期化時にapplyViewが設定する）
+  recipe: null,     // 挑戦中のレシピ
+  hints: [],        // 開いたヒント（{label, text}）。一度開いたら閉じずに残す
+  mismatch: null,   // 直近の答え合わせ結果（ズレているブロック名の配列）。未実施ならnull
+  done: false,
+  idleTimer: null,  // 一定時間操作が無いとヒントをそっと促す
 };
 
 const BLOCK_LABELS = { oscA: 'OSC', filter: 'FILTER', ampEnv: 'ENV1', lfo1: 'LFO1', mod: 'MOD', master: 'OUT' };
 const DIFFICULTY_LABELS = { 1: 'やさしい', 2: 'ふつう', 3: 'むずかしい' };
 const MODE_DESCRIPTIONS = {
   play: 'さわる — 自由に音作りをする場所。鍵盤で鳴らしながらノブを回すと、下の説明パネルが解説します',
-  make: 'つくる — お手本の音を、手順どおりにノブを動かして再現する練習',
-  ear: 'きく — AとBの聞き分けで、音の変化を聴き取る耳を鍛えるテスト',
+  make: 'つくる — お手本の音を聴いて、どうすれば同じ音になるか自分で考えながら作る診断チャレンジ',
 };
+// ヒントラダー・近さ枠の対象となる「答え合わせ」ブロック名 → 実ラックのDOM要素id。
+// modには専用のラック区画が無く、配線・深さの操作はLFO1ブロック内で行うため同じ要素にまとめる
+const BLOCK_DOM_ID = { oscA: 'block-oscA', filter: 'block-filter', ampEnv: 'block-amp', lfo1: 'block-lfo1', mod: 'block-lfo1', master: 'block-out' };
+const PROXIMITY_RACK_IDS = ['block-oscA', 'block-filter', 'block-amp', 'block-lfo1', 'block-out'];
+const HINT_LABELS = ['聴きどころ', '注目ブロック', '具体的な操作'];
 
-// タブに進捗を表示する（3つのモードのつながりを常に見せる）
+// タブに進捗を表示する（数字だけでも「つくる」の全体量が見える）
 function updateNavProgress() {
   const doneCount = RECIPES.filter((r) => settings.recipesDone[r.id]).length;
   $('progressMake').textContent = `${doneCount}/${RECIPES.length}`;
-  const passed = QUIZ_LEVELS.filter((lv) => (settings.quizBest[lv.id] ?? -1) >= lv.passScore).length;
-  $('progressEar').textContent = `${passed}/${QUIZ_LEVELS.length}`;
 }
 
 // 初回だけ「つくる」への案内バナーを出す（閉じるか、レシピを1つでも完成したら出さない）
@@ -719,11 +720,6 @@ function updateIntroBanner() {
   $('introBanner').hidden = !(lesson.view === 'play' && !settings.introSeen && !anyDone);
   // 表示状態が変わった＝レイアウトの高さが変わったので、オーバーレイの配線座標を計算し直す
   if (wasHidden !== $('introBanner').hidden) Viz.updateGeometry();
-}
-
-function paramLabel(id) {
-  const def = paramById(id);
-  return def ? `${BLOCK_LABELS[def.block] || def.block}の${def.name}` : id;
 }
 
 // 小さなDOM生成ヘルパー
@@ -741,8 +737,8 @@ function refreshAfterPatchApply() {
   Viz.updateGeometry();
 }
 
-// 発展的パラメーターのうち、現在のレシピステップで要求されているものは
-// 「かんたん表示」でも表示する（has-modと同じ仕組み）。作業中でなければ全て解除する
+// 発展的パラメーターのうち、挑戦中のレシピが対象とするものは
+// 「かんたん表示」でも表示する（has-modと同じ仕組み）。挑戦中でなければ全て解除する
 function markLessonRequiredParams(ids) {
   const idSet = new Set(ids || []);
   for (const [pid, k] of knobEls) {
@@ -750,7 +746,7 @@ function markLessonRequiredParams(ids) {
   }
 }
 
-// 試聴（お手本/A・B）を中断し、UIロックも解除する
+// 試聴（お手本/いまの音）を中断し、UIロックも解除する
 function stopAudition() {
   SynthEngine.stopPhrase();
   document.body.classList.remove('audition-lock');
@@ -762,31 +758,26 @@ function applyView(view) {
   const prev = lesson.view;
   if (prev === view) return;
   stopAudition();
-  if (prev === 'make') markLessonRequiredParams([]);
+  if (prev === 'make') {
+    clearProximityFrames();
+    markLessonRequiredParams([]);
+    if (lesson.idleTimer) clearTimeout(lesson.idleTimer);
+  }
   exitAssignMode();
-  // きくモードを離れるときは、入る前に作っていた音を復元する
-  if (prev === 'ear' && lesson.sandboxPatch) {
-    SynthEngine.applyPatch(lesson.sandboxPatch);
-    refreshAfterPatchApply();
-    lesson.sandboxPatch = null;
-  }
-  if (prev === 'ear') {
-    lesson.quiz = null;
-    document.body.classList.remove('quiz-lock');
-  }
-  if (view === 'ear') {
-    lesson.sandboxPatch = SynthEngine.getPatch();
-  }
   lesson.view = view;
   settings.view = view;
   saveSettings();
-  for (const [id, v] of [['viewPlay', 'play'], ['viewMake', 'make'], ['viewEar', 'ear']]) {
+  for (const [id, v] of [['viewPlay', 'play'], ['viewMake', 'make']]) {
     $(id).classList.toggle('on', view === v);
   }
   $('modeDesc').textContent = MODE_DESCRIPTIONS[view] || '';
   updateIntroBanner();
   $('lessonPanel').hidden = view === 'play';
-  renderLesson();
+  renderLesson(); // renderMakeが挑戦中の状態（発展パラメーター表示等）を正しく反映する
+  if (view === 'make' && lesson.recipe && !lesson.done) {
+    applyProximityFrames();
+    armStallTimer();
+  }
   // バナー・レッスンパネルの表示切替でsignalRack/modRackの縦位置がずれるため、
   // オーバーレイの配線座標（ENV1→AMP線・LFOモジュレーション線）を計算し直す
   Viz.updateGeometry();
@@ -796,17 +787,69 @@ function renderLesson() {
   const body = $('lessonBody');
   body.innerHTML = '';
   if (lesson.view === 'make') renderMake(body);
-  if (lesson.view === 'ear') renderEar(body);
 }
 
-// ---- つくる: 音作りテスト（レシピ再現） ----
+// ---- 近さ枠: targetに関わる実ブロックの縁を、近づくほど太く・強く見せる（色は使わない） ----
+
+function clearProximityFrames() {
+  for (const id of PROXIMITY_RACK_IDS) resetProximity($(id));
+}
+
+function applyProximityFrames() {
+  if (!lesson.recipe) { clearProximityFrames(); return; }
+  const patch = SynthEngine.getPatch();
+  const blocks = recipeTargetBlocks(lesson.recipe.target);
+  const domCloseness = {};
+  for (const block of blocks) {
+    const domId = BLOCK_DOM_ID[block];
+    const c = recipeBlockCloseness(patch, lesson.recipe.target, block);
+    // 1つのDOM要素に複数のブロックが重なる場合（mod+lfo1）は、厳しい方の近さを見せる
+    domCloseness[domId] = domId in domCloseness ? Math.min(domCloseness[domId], c) : c;
+  }
+  for (const id of PROXIMITY_RACK_IDS) {
+    const target = domCloseness[id];
+    if (target === undefined) resetProximity($(id));
+    else setProximity($(id), target);
+  }
+}
+
+function setProximity(blockEl, closeness) {
+  blockEl.style.borderWidth = (2 + closeness * 3.5) + 'px';
+  blockEl.style.boxShadow = closeness > 0.5 ? `0 0 ${(6 * closeness).toFixed(1)}px rgba(168,194,255,${(closeness * 0.5).toFixed(2)})` : 'none';
+}
+
+function resetProximity(blockEl) {
+  blockEl.style.borderWidth = '';
+  blockEl.style.boxShadow = '';
+}
+
+// ---- 停滞検知: しばらく操作が無く、直近の答え合わせも不一致のままなら、そっとヒントを促す ----
+
+function armStallTimer() {
+  if (lesson.idleTimer) clearTimeout(lesson.idleTimer);
+  lesson.idleTimer = setTimeout(() => {
+    if (lesson.recipe && !lesson.done && lesson.mismatch && lesson.mismatch.length > 0) {
+      const nudge = $('stallNudge');
+      if (nudge) nudge.classList.add('show');
+    }
+  }, 15000);
+}
+
+function resetStallTimer() {
+  const nudge = $('stallNudge');
+  if (nudge) nudge.classList.remove('show');
+  armStallTimer();
+}
+
+// ---- 一覧・挑戦画面のレンダリング ----
 
 function renderMake(body) {
   if (!lesson.recipe) {
     markLessonRequiredParams([]);
+    clearProximityFrames();
     const head = el('div', 'lesson-head');
-    head.appendChild(el('h2', null, '音作りテスト'));
-    head.appendChild(el('span', 'goal', 'お手本の音を聴いて、手順どおりにノブを動かして再現します。できた音はそのまま使えます。'));
+    head.appendChild(el('h2', null, 'つくる'));
+    head.appendChild(el('span', 'goal', 'お手本の音を聴いて、どうすれば同じ音になるか自分で考えながら作ります。'));
     body.appendChild(head);
     const cards = el('div', 'lesson-cards');
     for (const r of RECIPES.slice().sort((a, b) => a.order - b.order)) {
@@ -814,8 +857,7 @@ function renderMake(body) {
       card.type = 'button';
       card.appendChild(el('div', 'lc-title', r.title));
       card.appendChild(el('div', 'lc-goal', r.goal));
-      const done = settings.recipesDone[r.id] ? '　完成済み' : '';
-      card.appendChild(el('div', 'lc-meta', `${DIFFICULTY_LABELS[r.difficulty]}・全${r.steps.length}ステップ${done}`));
+      card.appendChild(el('div', 'lc-meta', DIFFICULTY_LABELS[r.difficulty] + (settings.recipesDone[r.id] ? '　完成済み' : '')));
       card.addEventListener('click', () => startRecipe(r));
       cards.appendChild(card);
     }
@@ -831,11 +873,10 @@ function renderMake(body) {
   body.appendChild(head);
 
   const actions = el('div', 'lesson-actions');
-  const btnTarget = el('button', 'primary', 'お手本の音を聴く');
+  const btnTarget = el('button', 'primary', 'お手本を聴く');
   btnTarget.type = 'button';
   btnTarget.addEventListener('click', () => {
-    // 再生中はエンジンのパッチがお手本に一時差し替わるため、ノブ操作をロックする。
-    // ロックせずに触ると、レシピの達成判定がお手本パッチ基準で誤発火する
+    // 再生中はエンジンのパッチがお手本に一時差し替わるため、ノブ操作をロックする
     stopAudition();
     document.body.classList.add('audition-lock');
     SynthEngine.playPhrase(r.audition, {
@@ -846,28 +887,49 @@ function renderMake(body) {
   const btnCurrent = el('button', null, 'いまの音を聴く');
   btnCurrent.type = 'button';
   btnCurrent.addEventListener('click', () => { stopAudition(); SynthEngine.playPhrase(r.audition); });
-  const btnBack = el('button', null, 'テスト一覧へ戻る');
+  const btnBack = el('button', null, '一覧へ戻る');
   btnBack.type = 'button';
-  btnBack.addEventListener('click', () => { stopAudition(); lesson.recipe = null; renderLesson(); });
+  btnBack.addEventListener('click', () => {
+    stopAudition();
+    clearProximityFrames();
+    markLessonRequiredParams([]);
+    if (lesson.idleTimer) clearTimeout(lesson.idleTimer);
+    lesson.recipe = null;
+    renderLesson();
+  });
   actions.appendChild(btnTarget);
   actions.appendChild(btnCurrent);
   actions.appendChild(btnBack);
   body.appendChild(actions);
 
-  if (lesson.stepIdx >= r.steps.length) {
+  // 答え合わせ（いつでも押せる。ブロック単位のズレ件数だけを返し、パラメーター名や数値は明かさない）
+  const checkRow = el('div', 'check-row');
+  const checkBtn = el('button', 'check-btn', '答え合わせ');
+  checkBtn.type = 'button';
+  checkBtn.disabled = lesson.done;
+  checkBtn.addEventListener('click', doCheck);
+  const feedback = el('span', 'check-feedback');
+  feedback.innerHTML = lesson.done
+    ? '<span class="ok">ズレなし</span>'
+    : (lesson.mismatch === null ? 'まだ答え合わせをしていません' : escapeHtml(mismatchText(lesson.mismatch)));
+  checkRow.appendChild(checkBtn);
+  checkRow.appendChild(feedback);
+  body.appendChild(checkRow);
+
+  if (lesson.done) {
     markLessonRequiredParams([]);
-    settings.recipesDone[r.id] = true;
-    saveSettings();
-    updateNavProgress();
-    const done = el('div', 'lesson-done');
-    done.appendChild(el('div', 'ld-title', 'できあがり'));
-    done.appendChild(el('div', null, 'お手本と聴き比べてみましょう。この音は「さわる」に戻ってそのまま使えますし、「音を保存」もできます。'));
-    // 次にやることへの導線（モードが独立して感じられないように）
+    const sweep = el('div', 'sweep-line run');
+    sweep.appendChild(el('div', 'sweep-fill'));
+    body.appendChild(sweep);
+
+    const doneBox = el('div', 'lesson-done show');
+    doneBox.appendChild(el('div', 'ld-title', 'できあがり'));
+    doneBox.appendChild(el('div', null, r.insight));
     const nav = el('div', 'lesson-actions');
     nav.style.justifyContent = 'center';
-    const nextRecipe = RECIPES.slice().sort((a, b) => a.order - b.order).find((x) => !settings.recipesDone[x.id]);
+    const nextRecipe = RECIPES.slice().sort((a, b) => a.order - b.order).find((x) => !settings.recipesDone[x.id] && x.id !== r.id);
     if (nextRecipe) {
-      const nextBtn = el('button', 'primary', `次のテストへ（${nextRecipe.title}）`);
+      const nextBtn = el('button', 'primary', `次の課題へ（${nextRecipe.title}）`);
       nextBtn.type = 'button';
       nextBtn.addEventListener('click', () => startRecipe(nextRecipe));
       nav.appendChild(nextBtn);
@@ -876,38 +938,80 @@ function renderMake(body) {
     playBtn.type = 'button';
     playBtn.addEventListener('click', () => applyView('play'));
     nav.appendChild(playBtn);
-    const earBtn = el('button', null, 'きくで耳を試す');
-    earBtn.type = 'button';
-    earBtn.addEventListener('click', () => applyView('ear'));
-    nav.appendChild(earBtn);
-    done.appendChild(nav);
-    body.appendChild(done);
+    doneBox.appendChild(nav);
+    body.appendChild(doneBox);
     return;
   }
 
-  const list = el('div', 'step-list');
-  r.steps.forEach((s, i) => {
-    const state = i < lesson.stepIdx ? 'done' : i === lesson.stepIdx ? 'current' : '';
-    const card = el('div', `step-card ${state}`);
-    card.appendChild(el('div', 'st-title', `${i + 1}. ${s.title}`));
-    if (i === lesson.stepIdx) {
-      card.appendChild(el('div', 'st-text', s.text));
-      if (s.listen) card.appendChild(el('div', 'st-listen', `聴きどころ: ${s.listen}`));
-      if (s.auto) {
-        const btn = el('button', null, 'この操作を適用する');
-        btn.type = 'button';
-        btn.style.marginTop = '8px';
-        btn.addEventListener('click', () => {
-          for (const [id, v] of Object.entries(s.params)) setParam(id, v);
-        });
-        card.appendChild(btn);
-      }
-    }
-    list.appendChild(card);
-  });
-  body.appendChild(list);
-  // 現在のステップが要求するノブは、かんたん表示でも隠さない（オクターブ等の発展パラメーター対策）
-  markLessonRequiredParams(Object.keys(r.steps[lesson.stepIdx].params));
+  markLessonRequiredParams(Object.keys(r.target));
+
+  const hintArea = el('div', 'hint-area');
+  const hintBtn = el('button', 'hint-btn', hintButtonLabel());
+  hintBtn.type = 'button';
+  hintBtn.disabled = lesson.hints.length >= 3;
+  hintBtn.addEventListener('click', revealNextHint);
+  hintArea.appendChild(hintBtn);
+  const nudge = el('div', 'stall-nudge', '行き詰まったら、ヒントを見てみましょう');
+  nudge.id = 'stallNudge';
+  hintArea.appendChild(nudge);
+  const hintList = el('div', 'hint-list');
+  for (const h of lesson.hints) {
+    const item = el('div', 'hint-item');
+    item.innerHTML = `<b>ヒント${lesson.hints.indexOf(h) + 1}: ${escapeHtml(h.label)}</b>${escapeHtml(h.text)}`;
+    hintList.appendChild(item);
+  }
+  hintArea.appendChild(hintList);
+  body.appendChild(hintArea);
+}
+
+function hintButtonLabel() {
+  const n = lesson.hints.length;
+  return n >= 3 ? 'ヒントを見る（3/3・すべて開きました）' : `ヒントを見る（${n + 1}/3）`;
+}
+
+// 現在のパッチをtargetと突き合わせ、ズレているブロック名（表示用ラベル）を返す
+function currentMismatchBlocks() {
+  if (!lesson.recipe) return [];
+  return recipeJudgeAll(SynthEngine.getPatch(), lesson.recipe.target);
+}
+
+function mismatchText(off) {
+  if (off.length === 0) return 'ズレなし';
+  return `ズレているものが、あと ${off.length} 個あります（${off.map((b) => BLOCK_LABELS[b] || b).join('・')}周辺）`;
+}
+
+// ヒント段階ごとの文言。段階0=抽象的な聴きどころ（レシピ固定）、段階1=注目ブロック名
+// （その時点の答え合わせ結果から動的に生成）、段階2=ブロックごとの具体的な操作方針。
+// 一度生成した文言は開いた時点で固定し、以後ノブを動かしても変わらない
+function hintTextAt(r, levelIdx) {
+  if (levelIdx === 0) return r.approach;
+  const off = currentMismatchBlocks();
+  if (off.length === 0) return 'いまのところ近づけているようです。答え合わせしてみましょう';
+  if (levelIdx === 1) return `${off.map((b) => BLOCK_LABELS[b] || b).join('・')}のあたりに注目してみて`;
+  return off.map((b) => r.blockHints[b]).filter(Boolean).join('　/　');
+}
+
+function revealNextHint() {
+  if (!lesson.recipe || lesson.hints.length >= 3) return;
+  resetStallTimer();
+  const levelIdx = lesson.hints.length;
+  lesson.hints.push({ label: HINT_LABELS[levelIdx], text: hintTextAt(lesson.recipe, levelIdx) });
+  renderLesson();
+}
+
+function doCheck() {
+  if (!lesson.recipe || lesson.done) return;
+  resetStallTimer();
+  const off = currentMismatchBlocks();
+  lesson.mismatch = off;
+  if (off.length === 0) {
+    lesson.done = true;
+    settings.recipesDone[lesson.recipe.id] = true;
+    saveSettings();
+    updateNavProgress();
+    if (lesson.idleTimer) clearTimeout(lesson.idleTimer);
+  }
+  renderLesson();
 }
 
 function startRecipe(r) {
@@ -915,192 +1019,22 @@ function startRecipe(r) {
   SynthEngine.applyPatch(Object.assign(defaultPatch(), r.init));
   refreshAfterPatchApply();
   lesson.recipe = r;
-  lesson.stepIdx = recipeNextStep(SynthEngine.getPatch(), r);
+  lesson.hints = [];
+  lesson.mismatch = null;
+  lesson.done = false;
   renderLesson();
-  $('roAction').textContent = `音作りテスト「${r.title}」を開始`;
-  $('roDetail').textContent = 'まず「お手本の音を聴く」で完成形を確認してから、ステップ1に取りかかりましょう。';
+  applyProximityFrames();
+  armStallTimer();
+  $('roAction').textContent = `「${r.title}」を開始`;
+  $('roDetail').textContent = 'お手本を聴いて、どこがどう違うか自分の耳で確かめてみましょう。';
 }
 
-// ノブが動くたびに呼ばれ、現在のステップが達成されたら次へ進める
+// ノブが動くたびに呼ばれる。答え合わせやヒントの内容はここでは変えず、
+// 近さ枠（実ブロックの縁の強調）だけをその場で更新する
 function lessonOnParamChange() {
-  if (lesson.view !== 'make' || !lesson.recipe) return;
-  const next = recipeNextStep(SynthEngine.getPatch(), lesson.recipe);
-  if (next === lesson.stepIdx) return;
-  const finished = next >= lesson.recipe.steps.length;
-  const advanced = next > lesson.stepIdx;
-  lesson.stepIdx = next;
-  renderLesson();
-  if (finished) {
-    $('roAction').textContent = 'できあがり';
-    $('roDetail').textContent = '「お手本の音を聴く」と「いまの音を聴く」で聴き比べてみましょう。';
-  } else if (advanced) {
-    $('roAction').textContent = 'ステップ完了';
-    $('roDetail').textContent = `次は「${lesson.recipe.steps[next].title}」です。`;
-  }
-}
-
-// ---- きく: 聞き取りテスト（どのノブが変わった？） ----
-
-function renderEar(body) {
-  if (!lesson.quiz) {
-    document.body.classList.remove('quiz-lock');
-    const head = el('div', 'lesson-head');
-    head.appendChild(el('h2', null, '聞き取りテスト'));
-    head.appendChild(el('span', 'goal', 'AとBの音を聴き比べて、どのノブが変わったかを当てます。逃げない耳が育ちます。'));
-    body.appendChild(head);
-    const cards = el('div', 'lesson-cards');
-    for (const lv of QUIZ_LEVELS) {
-      const card = el('button', 'lesson-card');
-      card.type = 'button';
-      card.appendChild(el('div', 'lc-title', lv.name));
-      card.appendChild(el('div', 'lc-goal', lv.desc));
-      const best = settings.quizBest[lv.id];
-      card.appendChild(el('div', 'lc-meta',
-        `全${lv.questionCount}問・${lv.passScore}問正解で合格${best !== undefined ? `　自己ベスト ${best}/${lv.questionCount}` : ''}`));
-      card.addEventListener('click', () => startQuiz(lv));
-      cards.appendChild(card);
-    }
-    body.appendChild(cards);
-    return;
-  }
-
-  const quiz = lesson.quiz;
-
-  if (quiz.qIdx >= quiz.level.questionCount) {
-    const passed = quiz.score >= quiz.level.passScore;
-    const done = el('div', 'lesson-done');
-    done.appendChild(el('div', 'ld-title', passed ? '合格' : 'もう少し'));
-    done.appendChild(el('div', null, `${quiz.level.name}: ${quiz.score} / ${quiz.level.questionCount} 問正解（合格ラインは${quiz.level.passScore}問）`));
-    const actions = el('div', 'lesson-actions');
-    actions.style.justifyContent = 'center';
-    // 合格したら次のレベルへ、不合格ならもう一度が主導線
-    const nextLevel = QUIZ_LEVELS[QUIZ_LEVELS.indexOf(quiz.level) + 1];
-    if (passed && nextLevel) {
-      const nextBtn = el('button', 'primary', `次のレベルへ（${nextLevel.name}）`);
-      nextBtn.type = 'button';
-      nextBtn.addEventListener('click', () => startQuiz(nextLevel));
-      actions.appendChild(nextBtn);
-    }
-    const again = el('button', passed && nextLevel ? null : 'primary', 'もう一度挑戦');
-    again.type = 'button';
-    again.addEventListener('click', () => startQuiz(quiz.level));
-    const back = el('button', null, 'レベル一覧へ');
-    back.type = 'button';
-    back.addEventListener('click', () => { lesson.quiz = null; renderLesson(); });
-    const makeBtn = el('button', null, 'つくるで音作りを試す');
-    makeBtn.type = 'button';
-    makeBtn.addEventListener('click', () => applyView('make'));
-    actions.appendChild(again);
-    actions.appendChild(back);
-    actions.appendChild(makeBtn);
-    done.appendChild(actions);
-    body.appendChild(done);
-    return;
-  }
-
-  const q = quiz.q;
-  body.appendChild(el('div', 'quiz-status',
-    `${quiz.level.name}　問題 ${quiz.qIdx + 1} / ${quiz.level.questionCount}　ここまで ${quiz.score} 問正解`));
-
-  const ab = el('div', 'quiz-actions');
-  const btnA = el('button', 'ab', 'Aの音（もと）');
-  btnA.type = 'button';
-  // 回答前はノブの見た目を更新しない（値が動いて見えると聴かずに正解できてしまうため）。
-  // 音だけをA/Bで切り替える
-  btnA.addEventListener('click', () => {
-    SynthEngine.applyPatch(q.base);
-    SynthEngine.playPhrase(QUIZ_BASE_PATCHES[q.baseId].audition);
-  });
-  const btnB = el('button', 'ab', 'Bの音（どこかが変わった）');
-  btnB.type = 'button';
-  btnB.addEventListener('click', () => {
-    SynthEngine.applyPatch(Object.assign({}, q.base, { [q.target]: q.after }));
-    SynthEngine.playPhrase(QUIZ_BASE_PATCHES[q.baseId].audition);
-  });
-  ab.appendChild(btnA);
-  ab.appendChild(btnB);
-  body.appendChild(ab);
-  body.appendChild(el('div', 'quiz-status', '何度でも聴き比べてOK。変わったのはどのノブ？'));
-
-  const choices = el('div', 'quiz-choices');
-  for (const c of q.choices) {
-    const btn = el('button', null, paramLabel(c));
-    btn.type = 'button';
-    btn.dataset.choice = c;
-    btn.addEventListener('click', () => answerQuiz(c, choices));
-    choices.appendChild(btn);
-  }
-  body.appendChild(choices);
-
-  const fb = el('div', 'quiz-feedback');
-  fb.id = 'quizFeedback';
-  body.appendChild(fb);
-}
-
-function startQuiz(level) {
-  lesson.quiz = { level, qIdx: 0, score: 0, q: null, answered: false };
-  document.body.classList.add('quiz-lock');
-  nextQuizQuestion();
-}
-
-function nextQuizQuestion() {
-  stopAudition();
-  const quiz = lesson.quiz;
-  quiz.q = quizGenQuestion(quiz.level, QUIZ_BASE_PATCHES, Math.random, settings.quizStats);
-  quiz.answered = false;
-  SynthEngine.applyPatch(quiz.q.base);
-  // ここではノブ表示を更新しない（回答前に見た目で答えが分かってしまうため）。
-  // 正解発表時に answerQuiz() が改めて表示を同期させる
-  renderLesson();
-}
-
-function answerQuiz(choice, choicesEl) {
-  const quiz = lesson.quiz;
-  if (quiz.answered) return;
-  quiz.answered = true;
-  const q = quiz.q;
-  const correct = quizJudge(q, choice);
-  // 弱点の記録（正答率が低いパラメーターほど次から出やすくなる）
-  const s = settings.quizStats[q.target] || { seen: 0, correct: 0 };
-  s.seen += 1;
-  if (correct) s.correct += 1;
-  settings.quizStats[q.target] = s;
-  if (correct) quiz.score += 1;
-  if (quiz.qIdx + 1 >= quiz.level.questionCount) {
-    // 最終問題は回答した瞬間に合否・自己ベストを確定する。「結果を見る」ボタンを
-    // 押さずに別モードへ切り替えても、達成した記録がここで失われないようにする
-    const best = settings.quizBest[quiz.level.id];
-    if (best === undefined || quiz.score > best) settings.quizBest[quiz.level.id] = quiz.score;
-    updateNavProgress();
-  }
-  saveSettings();
-
-  // 回答後は初めて実際の状態（値・配線）を見せる。正解のノブがどこにあったか確認できる
-  SynthEngine.applyPatch(Object.assign({}, q.base, { [q.target]: q.after }));
-  refreshAfterPatchApply();
-
-  for (const btn of choicesEl.querySelectorAll('button')) {
-    if (btn.dataset.choice === q.target) btn.classList.add('correct');
-    else if (btn.dataset.choice === choice) btn.classList.add('wrong');
-    btn.disabled = true;
-  }
-  const def = paramById(q.target);
-  const dirText = q.dir === null ? '' : q.dir > 0 ? '（上げた）' : '（下げた）';
-  const fb = $('quizFeedback');
-  fb.innerHTML = `<span class="${correct ? 'ok' : 'ng'}">${correct ? '正解' : '不正解'}</span>　変わったのは「${escapeHtml(paramLabel(q.target))}」${dirText}。${escapeHtml(def.short)}`;
-  const next = el('button', null, quiz.qIdx + 1 >= quiz.level.questionCount ? '結果を見る' : '次の問題へ');
-  next.type = 'button';
-  next.style.marginLeft = '12px';
-  next.addEventListener('click', () => {
-    quiz.qIdx += 1;
-    if (quiz.qIdx >= quiz.level.questionCount) {
-      // 合否・自己ベストは既にanswerQuiz()側で確定済み。ここでは結果画面への遷移のみ行う
-      renderLesson();
-    } else {
-      nextQuizQuestion();
-    }
-  });
-  fb.appendChild(next);
+  if (lesson.view !== 'make' || !lesson.recipe || lesson.done) return;
+  resetStallTimer();
+  applyProximityFrames();
 }
 
 // ---------- 表示モード（シンプル/フル）とテーマ ----------
@@ -1187,7 +1121,6 @@ $('modeFull').addEventListener('click', () => applyMode('full'));
 $('themeBtn').addEventListener('click', () => applyTheme(settings.theme === 'dark' ? 'light' : 'dark'));
 $('viewPlay').addEventListener('click', () => applyView('play'));
 $('viewMake').addEventListener('click', () => applyView('make'));
-$('viewEar').addEventListener('click', () => applyView('ear'));
 $('introGo').addEventListener('click', () => {
   settings.introSeen = true;
   saveSettings();

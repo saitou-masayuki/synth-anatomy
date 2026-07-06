@@ -220,7 +220,7 @@ body.simple .param[data-adv="1"].lesson-required { display: flex; }
 /* お手本試聴中はノブ操作をロックする（エンジンのパッチが一時的にお手本に差し替わるため） */
 body.audition-lock #signalRack, body.audition-lock #modRack { pointer-events: none; opacity: 0.55; }
 
-/* ---- レッスンパネル（つくる/きく） ---- */
+/* ---- レッスンパネル（つくる: 診断チャレンジ） ---- */
 .nav-tabs button { font-weight: 600; padding: 6px 16px; }
 #lessonPanel { padding: 14px 16px; }
 .lesson-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -236,44 +236,60 @@ body.audition-lock #signalRack, body.audition-lock #modRack { pointer-events: no
 .lesson-card .lc-goal { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
 .lesson-card .lc-meta { font-size: 10.5px; color: var(--text-faint); margin-top: 6px; }
 .lesson-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
-.lesson-actions button, .step-card button, .quiz-actions button {
+.lesson-actions button {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; font-size: 13px; padding: 8px 14px; cursor: pointer; font-family: inherit;
 }
-.lesson-actions button:hover, .step-card button:hover, .quiz-actions button:hover { border-color: var(--accent); }
+.lesson-actions button:hover { border-color: var(--accent); }
 .lesson-actions button.primary { background: var(--accent-dark); color: var(--accent-text); border-color: var(--accent); }
-.step-list { display: flex; flex-direction: column; gap: 6px; }
-.step-card { border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; font-size: 12px; color: var(--text-faint); }
-.step-card.done { opacity: 0.55; }
-.step-card.done .st-title::after { content: '  済'; color: var(--ok); font-weight: 700; }
-.step-card.current { border-color: var(--accent); background: var(--panel-2); color: var(--text); }
-.step-card .st-title { font-weight: 700; font-size: 13px; }
-.step-card .st-text { margin-top: 4px; line-height: 1.6; }
-.step-card .st-listen { margin-top: 4px; color: var(--ok); font-size: 11.5px; }
-.step-card.current .st-num { color: var(--accent); }
 .lesson-done { text-align: center; padding: 14px 0; }
 .lesson-done .ld-title { font-size: 16px; font-weight: 700; color: var(--ok); margin-bottom: 6px; }
 
-/* きく（クイズ）モード中はノブ操作をロックする（A/Bの音を保つため。スコープは動き続ける）。
-   プリセット操作も出題中の音を壊してしまうため同様にロックする */
-body.quiz-lock #signalRack, body.quiz-lock #modRack,
-body.quiz-lock #presetSelect, body.quiz-lock #presetSave, body.quiz-lock #presetInit {
-  pointer-events: none; opacity: 0.55;
+/* お手本試聴・答え合わせが使う実ブロック（信号ラック）に、近づくほど濃く見える枠を付ける。
+   色は使わず、線の太さと発光の強さだけで「近さ」を表す（setProximity()がJSから直接指定） */
+#signalRack .block, #modRack .block { transition: border-width .2s, box-shadow .3s; }
+
+.check-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; flex-wrap: wrap; }
+.check-btn {
+  background: var(--accent-dark); color: var(--accent-text); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
 }
-.quiz-status { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
-.quiz-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
-.quiz-actions button.ab { font-size: 14px; font-weight: 700; padding: 12px 22px; }
-.quiz-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-top: 10px; }
-.quiz-choices button {
-  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; font-size: 13px; padding: 10px 12px; cursor: pointer; font-family: inherit;
+.check-btn:hover { filter: brightness(1.1); }
+.check-btn:disabled { opacity: .5; cursor: default; filter: none; }
+.check-feedback { font-size: 12.5px; color: var(--text-dim); }
+.check-feedback .ok { color: var(--ok); font-weight: 700; }
+
+/* 完成の一撃: 答え合わせが全一致した瞬間、信号ラックを貫くように一度だけ光が走る */
+.sweep-line { position: relative; height: 3px; background: var(--border); border-radius: 2px; margin: 0 0 14px; overflow: hidden; }
+.sweep-line .sweep-fill { position: absolute; inset: 0; width: 0; background: var(--accent-soft); border-radius: 2px; }
+.sweep-line.run .sweep-fill { animation: sweep 1.1s ease-out forwards; }
+@keyframes sweep {
+  from { width: 0; box-shadow: 0 0 0 var(--accent-soft); }
+  to { width: 100%; box-shadow: 0 0 10px 1px var(--accent-soft); }
 }
-.quiz-choices button:hover { border-color: var(--accent); }
-.quiz-choices button.correct { border-color: var(--ok); color: var(--ok); font-weight: 700; }
-.quiz-choices button.wrong { border-color: var(--ng); color: var(--ng); }
-.quiz-feedback { font-size: 13px; margin-top: 10px; line-height: 1.6; }
-.quiz-feedback .ok { color: var(--ok); font-weight: 700; }
-.quiz-feedback .ng { color: var(--ng); font-weight: 700; }
+.lesson-done.show { animation: lesson-done-in .5s ease-out; }
+@keyframes lesson-done-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ヒントラダー: 「ヒントを見る」を押すごとに1段階ずつ開き、開いたものは畳まれず残る */
+.hint-area { border-top: 1px solid var(--border); padding-top: 14px; }
+.hint-btn {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 9px 15px; font-size: 12.5px; cursor: pointer; font-family: inherit;
+}
+.hint-btn:hover:not(:disabled) { border-color: var(--accent); }
+.hint-btn:disabled { opacity: .4; cursor: default; }
+.stall-nudge { font-size: 11px; color: var(--text-faint); margin-top: 8px; opacity: 0; transition: opacity .6s; height: 14px; }
+.stall-nudge.show { opacity: 1; }
+.hint-list { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+.hint-item {
+  font-size: 12px; color: var(--text-dim); background: var(--panel-2); border-radius: 7px;
+  padding: 8px 11px; line-height: 1.55; border-left: 2px solid var(--accent-soft);
+}
+.hint-item b { color: var(--text-faint); font-size: 10px; letter-spacing: .5px; display: block; margin-bottom: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lesson-done.show, .sweep-line.run .sweep-fill { animation: none; }
+}
 
 /* ---- フッター ---- */
 footer { font-size: 10.5px; color: var(--text-faint); padding: 6px 4px 0; display: flex; gap: 18px; flex-wrap: wrap; }

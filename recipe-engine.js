@@ -1,40 +1,58 @@
-// シンセ解剖図 — 音作りテスト（レシピ再現）の純粋ロジック。DOM/AudioContext非依存。
+// シンセマスター — 音作りチャレンジ（診断チャレンジ）の純粋ロジック。DOM/AudioContext非依存。
+//
 // レシピの構造:
-//   init   既定パッチとの差分（開始状態）
-//   target init との差分（完成形。通常のパッチとしてそのまま試聴に使える）
-//   steps  [{ title, text, params: {paramId: 目標値}, tol?, auto?, listen? }]
-// 不変条件「init に全ステップの params を順に適用した結果 ≡ init + target」は
-// テスト（コンテンツ整合性）で機械検証する。
+//   init   既定パッチとの差分（挑戦開始時に適用される）
+//   target init との差分（完成形。「お手本を聴く」はこのパッチで試聴する）
+// 「答え合わせ」「近さ枠」は、targetの各paramIdが持つcontent-params.jsのblock情報を使って
+// 自動的にブロック単位へ集約する（ブロック一覧をコンテンツ側で手動管理する必要がない）。
 
-// 全ステップを順に適用したパッチを返す（恒等性検証用。引数は破壊しない）
-function recipeApplySteps(initPatch, steps) {
-  const patch = Object.assign({}, initPatch);
-  for (const step of steps) {
-    Object.assign(patch, step.params);
-  }
-  return patch;
-}
+var RECIPE_DEFAULT_TOL = 0.06;
 
-// ステップの全パラメーターが目標に達しているか。
-// 数値は正規化空間の許容誤差（既定0.05）、enum/boolは完全一致で判定する
-function recipeStepDone(patch, step) {
-  const tol = step.tol === undefined ? 0.05 : step.tol;
-  for (const [id, targetValue] of Object.entries(step.params)) {
+// targetのparamIdから、関係するブロック名の一覧を重複なく返す
+function recipeTargetBlocks(target) {
+  const blocks = new Set();
+  for (const id of Object.keys(target)) {
     const def = paramById(id);
-    if (!def) return false;
-    if (def.type === 'enum' || def.type === 'bool') {
-      if (patch[id] !== targetValue) return false;
-    } else {
-      if (Math.abs(normParam(id, patch[id]) - normParam(id, targetValue)) > tol) return false;
-    }
+    if (def) blocks.add(def.block);
   }
-  return true;
+  return [...blocks];
 }
 
-// 最初の未完了ステップの番号を返す（全完了ならステップ総数）
-function recipeNextStep(patch, recipe) {
-  for (let i = 0; i < recipe.steps.length; i++) {
-    if (!recipeStepDone(patch, recipe.steps[i])) return i;
+// パラメーター1つぶんの正規化距離（0=完全一致、1=最大の隔たり）。
+// enum/boolは「近い」が意味を持たないため、一致0・不一致1の二値として扱う
+function recipeParamDistance(id, value, targetValue) {
+  const def = paramById(id);
+  if (def.type === 'enum' || def.type === 'bool') {
+    return value === targetValue ? 0 : 1;
   }
-  return recipe.steps.length;
+  return Math.abs(normParam(id, value) - normParam(id, targetValue));
+}
+
+// 現在のパッチをtargetと突き合わせ、許容誤差を超えてズレているブロック名だけを返す。
+// パラメーター名や具体的な値は一切含めない（「答え合わせ」はどれだけ・どこがではなく
+// 何個ズレているかしか教えない、という設計上の制約をここで担保する）
+function recipeJudgeAll(patch, target, tol) {
+  const t = tol === undefined ? RECIPE_DEFAULT_TOL : tol;
+  const offBlocks = new Set();
+  for (const [id, targetValue] of Object.entries(target)) {
+    const def = paramById(id);
+    if (!def) continue;
+    if (recipeParamDistance(id, patch[id], targetValue) > t) offBlocks.add(def.block);
+  }
+  return [...offBlocks];
+}
+
+// 指定ブロックの「近さ」を0..1で返す（1=完全一致）。targetのうちそのブロックに
+// 属するパラメーターだけを対象に、最も遠い1件の距離から算出する。
+// recipeJudgeAll（「1つでも許容誤差を超えたらそのブロックはアウト」）と基準を揃えるため、
+// 平均ではなく最大距離を使う（平均だと、大きくズレた1件が他の近い項目に薄められてしまう）。
+// 対象パラメーターが無いブロック（そもそもズレようがない）は1を返す
+function recipeBlockCloseness(patch, target, block) {
+  const ids = Object.keys(target).filter((id) => {
+    const def = paramById(id);
+    return def && def.block === block;
+  });
+  if (ids.length === 0) return 1;
+  const maxDist = Math.max(...ids.map((id) => recipeParamDistance(id, patch[id], target[id])));
+  return Math.max(0, 1 - maxDist);
 }

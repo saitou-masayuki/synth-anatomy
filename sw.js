@@ -1,11 +1,11 @@
-// シンセ解剖図 の Service Worker。
+// シンセマスター の Service Worker。
 // ネットワーク優先（常に最新を取得し、成功したらキャッシュを更新）で、
 // オフライン時だけキャッシュから返す。古いバージョンが残り続ける罠を避ける方針。
-const CACHE = 'synth-anatomy-v2';
+const CACHE = 'synth-anatomy-v3';
 const PRECACHE = [
   './', './index.html', './styles.css',
   './content-params.js', './wavetables.js', './mod-engine.js', './describe-engine.js',
-  './recipe-engine.js', './quiz-engine.js', './content-recipes.js', './content-quiz.js',
+  './recipe-engine.js', './content-recipes.js',
   './synth-engine.js', './viz.js', './app.js',
   './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-512-maskable.png',
 ];

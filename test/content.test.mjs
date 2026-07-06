@@ -3,13 +3,13 @@ import { createContext, runInContext } from 'node:vm';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// コンテンツ（レシピ・クイズ）とエンジン定義の整合性を機械検証する。
+// レシピコンテンツとエンジン定義の整合性を機械検証する。
 // 「コンテンツの数値の矛盾はテストが検出する」のがこのプロジェクトの運用方針
 const ctx = createContext({});
-for (const file of ['../content-params.js', '../recipe-engine.js', '../quiz-engine.js', '../content-recipes.js', '../content-quiz.js']) {
+for (const file of ['../content-params.js', '../recipe-engine.js', '../content-recipes.js']) {
   runInContext(readFileSync(new URL(file, import.meta.url), 'utf8'), ctx);
 }
-const { PARAMS, RECIPES, QUIZ_LEVELS, QUIZ_BASE_PATCHES, paramById, defaultPatch, recipeApplySteps, quizGenQuestion } = ctx;
+const { PARAMS, RECIPES, paramById, defaultPatch, recipeTargetBlocks, recipeJudgeAll, recipeBlockCloseness } = ctx;
 
 function plain(x) {
   return JSON.parse(JSON.stringify(x));
@@ -27,7 +27,7 @@ function assertValidValue(id, v, where) {
   }
 }
 
-// ---- レシピ ----
+// ---- 基本構造 ----
 
 test('レシピが存在し、必須フィールドを持つ', () => {
   assert.ok(Array.isArray(RECIPES) && RECIPES.length >= 5);
@@ -38,11 +38,9 @@ test('レシピが存在し、必須フィールドを持つ', () => {
     assert.ok([1, 2, 3].includes(r.difficulty), `${r.id}: difficultyが不正`);
     assert.ok(Array.isArray(r.audition.notes) && r.audition.notes.length > 0, `${r.id}: auditionがない`);
     assert.ok(r.audition.dur > 0, `${r.id}: audition.durが不正`);
-    assert.ok(r.steps.length >= 2, `${r.id}: ステップが少なすぎる`);
-    for (const s of r.steps) {
-      assert.ok(s.title && s.text, `${r.id}: ステップにtitle/textがない`);
-      assert.ok(Object.keys(s.params).length > 0, `${r.id}: パラメーターのないステップ`);
-    }
+    assert.ok(r.approach && r.approach.length > 0, `${r.id}: approach（ヒント段階1）がない`);
+    assert.ok(r.insight && r.insight.length > 0, `${r.id}: insight（完成後の一言）がない`);
+    assert.ok(Object.keys(r.target).length > 0, `${r.id}: targetが空`);
   }
 });
 
@@ -50,18 +48,38 @@ test('レシピの全パラメーター値が定義の範囲内', () => {
   for (const r of RECIPES) {
     for (const [id, v] of Object.entries(r.init)) assertValidValue(id, v, `${r.id}.init`);
     for (const [id, v] of Object.entries(r.target)) assertValidValue(id, v, `${r.id}.target`);
-    for (const s of r.steps) {
-      for (const [id, v] of Object.entries(s.params)) assertValidValue(id, v, `${r.id}/${s.title}`);
+  }
+});
+
+test('blockHints: targetが関わる全ブロックぶんのヒントが過不足なく用意されている', () => {
+  for (const r of RECIPES) {
+    const blocks = plain(recipeTargetBlocks(r.target)).sort();
+    const hintBlocks = Object.keys(r.blockHints).sort();
+    assert.deepEqual(hintBlocks, blocks, `${r.id}: blockHintsがtargetのブロック集合と一致しない`);
+    for (const [block, text] of Object.entries(r.blockHints)) {
+      assert.ok(text && text.length > 0, `${r.id}.${block}: ヒント文言が空`);
     }
   }
 });
 
-test('恒等性: initに全ステップを適用するとinit+targetに一致する（全レシピ）', () => {
+test('恒等性: init+targetを適用すると答え合わせで完全一致（全ブロックでcloseness=1・ズレ0件）', () => {
   for (const r of RECIPES) {
     const initFull = Object.assign(defaultPatch(), r.init);
-    const result = recipeApplySteps(initFull, r.steps);
-    const targetFull = Object.assign({}, initFull, r.target);
-    assert.deepEqual(plain(result), plain(targetFull), `${r.id}: ステップとtargetが矛盾`);
+    const patch = Object.assign({}, initFull, r.target);
+    assert.deepEqual(plain(recipeJudgeAll(patch, r.target)), [], `${r.id}: targetそのものが答え合わせに通らない`);
+    for (const block of recipeTargetBlocks(r.target)) {
+      assert.equal(recipeBlockCloseness(patch, r.target, block), 1, `${r.id}.${block}: 完全一致でcloseness≠1`);
+    }
+  }
+});
+
+test('レシピのinitはtargetからじゅうぶん離れている（挑戦として成立する）', () => {
+  // targetの値をそのまま初期状態にしてしまうと「答え合わせ」が挑戦なしで通ってしまう。
+  // 既定パッチ+initがtargetと一致していない（＝最低1ブロックはズレている）ことを保証する
+  for (const r of RECIPES) {
+    const initFull = Object.assign(defaultPatch(), r.init);
+    const offBlocks = recipeJudgeAll(initFull, r.target);
+    assert.ok(offBlocks.length > 0, `${r.id}: 開始状態が既にtargetと一致しており、挑戦にならない`);
   }
 });
 
@@ -75,68 +93,4 @@ test('レシピのaudition.notesは有効なMIDIノート番号', () => {
 
 test('レシピは純粋データ（JSON往復で恒等）', () => {
   assert.deepEqual(plain(RECIPES), plain(JSON.parse(JSON.stringify(plain(RECIPES)))));
-});
-
-// ---- クイズ ----
-
-test('クイズレベルが存在し、構造が正しい', () => {
-  assert.ok(Array.isArray(QUIZ_LEVELS) && QUIZ_LEVELS.length >= 3);
-  for (const lv of QUIZ_LEVELS) {
-    assert.ok(lv.id && lv.name && lv.desc, `${lv.id}: 名前がない`);
-    assert.ok(lv.pool.length >= lv.choices, `${lv.id}: 選択肢数が出題対象より多い`);
-    assert.ok(lv.delta > 0 && lv.delta <= 1, `${lv.id}: deltaが不正`);
-    assert.ok(lv.questionCount > 0 && lv.passScore <= lv.questionCount, `${lv.id}: 問題数/合格ラインが不正`);
-    for (const p of lv.pool) {
-      const def = paramById(p);
-      assert.ok(def && def.phase === 1, `${lv.id}: 不正なpool ${p}`);
-    }
-    for (const b of lv.basePatches) {
-      assert.ok(QUIZ_BASE_PATCHES[b], `${lv.id}: ベースパッチ ${b} がない`);
-    }
-  }
-});
-
-test('クイズのベースパッチの値が定義の範囲内で、試聴フレーズを持つ', () => {
-  for (const [id, base] of Object.entries(QUIZ_BASE_PATCHES)) {
-    for (const [pid, v] of Object.entries(base.patch)) assertValidValue(pid, v, `base ${id}`);
-    assert.ok(Array.isArray(base.audition.notes) && base.audition.dur > 0, `base ${id}: auditionがない`);
-  }
-});
-
-test('可聴性ルール: 出題対象が聴こえるベースパッチだけが使われている', () => {
-  for (const lv of QUIZ_LEVELS) {
-    for (const b of lv.basePatches) {
-      const patch = Object.assign(defaultPatch(), QUIZ_BASE_PATCHES[b].patch);
-      if (lv.pool.includes('oscA.wtPos')) {
-        assert.equal(patch['oscA.wave'], 'wt.basic', `${lv.id}/${b}: WT位置を出題するのにWT波形でない`);
-      }
-      if (lv.pool.includes('lfo1.rateHz')) {
-        assert.ok(patch['mod1.src'] === 'lfo1' && patch['mod1.dst'] !== 'none' && patch['mod1.amt'] !== 0,
-          `${lv.id}/${b}: LFO速さを出題するのにLFOが未配線`);
-      }
-      if (lv.pool.includes('ampEnv.release')) {
-        assert.ok(patch['ampEnv.sustain'] > 0, `${lv.id}/${b}: サステイン0だとリリースの変化が聴こえない`);
-      }
-      if (lv.pool.includes('ampEnv.decay')) {
-        assert.ok(patch['ampEnv.sustain'] <= 0.85, `${lv.id}/${b}: サステインが高すぎるとディケイの変化が聴こえない`);
-      }
-    }
-  }
-});
-
-test('出題生成が全レベルで安定して動く（100問生成でエラー・範囲外なし）', () => {
-  let seed = 1;
-  const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-  for (const lv of QUIZ_LEVELS) {
-    for (let i = 0; i < 100; i++) {
-      const q = quizGenQuestion(lv, QUIZ_BASE_PATCHES, rng, {});
-      assert.ok(lv.pool.includes(q.target));
-      assert.equal(q.choices.length, lv.choices);
-      const def = paramById(q.target);
-      if (def.type !== 'enum') {
-        assert.ok(q.after >= def.min && q.after <= def.max, `${lv.id}: after範囲外 ${q.target}=${q.after}`);
-        assert.notEqual(q.after, q.before, `${lv.id}: 値が変わっていない`);
-      }
-    }
-  }
 });
