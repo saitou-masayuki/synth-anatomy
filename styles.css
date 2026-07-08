@@ -327,3 +327,36 @@ footer .lg-mod { color: var(--mod-line); }
   #readout { flex-direction: column; gap: 6px; }
   #readout .ro-badge { align-self: flex-start; }
 }
+
+/* スマホでは鍵盤を常に画面下に置き、ノブを触りながらすぐ試奏できるようにする */
+@media (max-width: 640px) {
+  .app {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+  footer { padding-bottom: calc(124px + env(safe-area-inset-bottom)); }
+  #kbWrap {
+    position: fixed;
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: 0;
+    z-index: 30;
+    border-radius: 12px 12px 0 0;
+    padding: 8px 10px calc(7px + env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 26px rgba(0, 0, 0, .28);
+  }
+  #kb { height: 86px; }
+  .kb-hint {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@media (max-width: 640px) and (max-height: 560px) {
+  .app { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  footer { padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
+  #kb { height: 68px; }
+  .kb-hint { display: none; }
+}
