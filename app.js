@@ -24,17 +24,24 @@ if (!settings.recipesDone || typeof settings.recipesDone !== 'object' || Array.i
 settings.introSeen = settings.introSeen === true;
 
 let saveTimer = null;
+function persistNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  // 試聴（お手本）中の一時パッチは「自分の音」ではないため保存しない。
+  // 保存すると、リロード時に作りかけの音がお手本パッチで上書きされてしまう
+  if (!SynthEngine.auditioning) {
+    settings.patch = SynthEngine.getPatch();
+  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
+}
 function saveSettings() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    // 試聴（お手本）中の一時パッチは「自分の音」ではないため保存しない。
-    // 保存すると、リロード時に作りかけの音がお手本パッチで上書きされてしまう
-    if (!SynthEngine.auditioning) {
-      settings.patch = SynthEngine.getPatch();
-    }
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
-  }, 300);
+  saveTimer = setTimeout(persistNow, 300);
 }
+// iOS PWAは背景化で即凍結・破棄されることがあり、デバウンス中（300ms以内）の編集が
+// 失われる。背景化・ページ離脱の瞬間に即時書き込みする（persistNowは冪等なので二重発火は無害）
+window.addEventListener('pagehide', persistNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden) persistNow(); });
 
 // ---------- ノブ・セレクトの自動生成 ----------
 
@@ -677,6 +684,9 @@ function setupPresets() {
     e.target.value = '';
   });
   $('presetSave').addEventListener('click', () => {
+    // お手本再生中はエンジンのパッチが一時的にお手本へ差し替わっており、
+    // ここで保存すると正解パッチがマイプリセットに入ってしまう
+    if (SynthEngine.auditioning) return;
     const name = prompt('プリセット名を入力してください');
     if (!name) return;
     settings.presets[name] = SynthEngine.getPatch();
