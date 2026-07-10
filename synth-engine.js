@@ -134,10 +134,13 @@ var SynthEngine = (() => {
   // S&H・wtPos変調は音そのものを駆動するため、可視化のrAF（非表示タブで停止）とは
   // 独立したタイマーで回す。ただし常時回すと無操作時もAudioParamスケジュールを
   // 積み続けてバッテリーを消費するため、必要な間だけ起動する。
-  // 判定はoscA.waveに依存させない（wave切替はapplyModRoutingを通らないため、
-  // waveで止めるとwt.basicへ戻したとき再開の機会がない）
   function needsAudioDrive() {
-    return patch['lfo1.shape'] === 'sh' || wtPosModRoute() !== null;
+    const routes = resolveModRoutes(patch);
+    const drivesShAudio = patch['lfo1.shape'] === 'sh'
+      && routes.some((r) => r.src === 'lfo1' && r.kind === 'audio');
+    const drivesWtPos = patch['oscA.wave'] === 'wt.basic'
+      && routes.some((r) => r.src === 'lfo1' && r.kind === 'control' && r.dst === 'oscA.wtPos');
+    return drivesShAudio || drivesWtPos;
   }
 
   function updateDriveTimer() {
@@ -321,7 +324,10 @@ var SynthEngine = (() => {
     patch[id] = value;
     if (!nodes) return; // 初期化前はパッチにだけ反映（buildGraphがまとめて適用する）
     switch (id) {
-      case 'oscA.wave': applyWave(value); break;
+      case 'oscA.wave':
+        applyWave(value);
+        updateDriveTimer(); // wtPosルートが実際に音へ効く波形かどうかが変わる
+        break;
       case 'oscA.wtPos':
         // 変調中はaudioDriveTickが実効値で更新するため、手動値の直接適用はしない
         if (patch['oscA.wave'] === 'wt.basic' && !wtPosModRoute()) applyWtPos(value);
