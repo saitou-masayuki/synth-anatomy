@@ -211,7 +211,7 @@ Codexレビュー（2026-07-06）からの持ち越しバックログ:
 
 ## 検証方法
 
-- **自動テスト**: `node --test test/`（chord-lab方式）。パラメーター定義の範囲・カーブ往復・describe網羅、wavetableスペクトル整合性、LFO/ADSR数式、modスロット解決、診断チャレンジの答え合わせ・近さ判定・blockHints網羅性
+- **自動テスト**: `node --test test/*.test.mjs`（chord-lab方式）。パラメーター定義の範囲・カーブ往復・describe網羅、wavetableスペクトル整合性、LFO/ADSR数式、modスロット解決、診断チャレンジの答え合わせ・近さ判定・blockHints網羅性
 - **動作確認**: `.claude/launch.json`（python3 http.server）でローカル起動し、Claude Previewブラウザで確認 — 鍵盤で音が鳴る / カットオフを回すとFILTER出口のスペクトルが削れて見える / LFO割当で線が脈動しモッドリングが実際の変調位置で動く / 波形が静止して読める、を目視・聴覚確認
 - **音と表示の同期**: LFOをcutoffに割り当て、「音がワウと開く瞬間に線が山になる」ことを確認（outputLatency補正の検証）
 - **実機**: デスクトップChrome/Safari、iPhone Safari（マナーモード解錠・touch-action・fps）
