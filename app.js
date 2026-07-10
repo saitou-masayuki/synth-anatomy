@@ -80,6 +80,10 @@ function buildKnob(def) {
   const knob = document.createElement('div');
   knob.className = 'knob';
   knob.tabIndex = 0;
+  knob.setAttribute('role', 'slider');
+  knob.setAttribute('aria-label', def.name);
+  knob.setAttribute('aria-valuemin', def.min);
+  knob.setAttribute('aria-valuemax', def.max);
   knob.innerHTML = `
     <svg viewBox="0 0 72 72">
       <path class="k-track" d="${arcPath(26, -135, 135)}" stroke-width="5" fill="none"/>
@@ -175,6 +179,10 @@ function refreshParamVisual(id) {
     k.pointer.setAttribute('x2', p.x);
     k.pointer.setAttribute('y2', p.y);
     k.valueText.textContent = fmtValue(id, patch[id]);
+    // 値の変更経路（ドラッグ・ホイール・キー・プリセット読込）はすべてここを通るため、
+    // 支援技術向けの現在値もここで一元更新する
+    k.knob.setAttribute('aria-valuenow', patch[id]);
+    k.knob.setAttribute('aria-valuetext', fmtValue(id, patch[id]));
   }
   const sel = document.querySelector(`.param[data-param="${CSS.escape(id)}"] select`);
   if (sel && def.type === 'enum') sel.value = patch[id];
@@ -213,16 +221,21 @@ function attachKnobEvents(knob, def) {
   let lastY = 0;
   let curNorm = 0;
   let startValue = 0;
+  let dragDist = 0;   // pointerdownからの累積移動量（タップとドラッグの区別に使う）
+  let lastTapAt = 0;  // タッチのダブルタップ検出用
 
   knob.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return; // 右クリック等でドラッグ状態に入らない
     if (document.body.classList.contains('assign-mode')) {
-      // 割当モード中: このノブを変調先として確定する
+      // 割当モード中: このノブを変調先として確定する。直後のpointerupが
+      // タップ扱いにならないようにする（連続タップで初期値リセットが誤爆しないように）
+      dragDist = Infinity;
       if (knob.classList.contains('assignable')) assignTo(def.id);
       e.preventDefault();
       return;
     }
     dragging = true;
+    dragDist = 0;
     lastY = e.clientY;
     const patch = SynthEngine.getPatch();
     startValue = patch[def.id];
@@ -239,6 +252,7 @@ function attachKnobEvents(knob, def) {
     // 移動量を毎イベント加算する増分方式。ドラッグ途中でShiftを押し引きしても
     // 蓄積済み移動量が再解釈されず、値がジャンプしない
     const scale = e.shiftKey ? 1440 : 180; // Shiftで1/8精度
+    dragDist += Math.abs(lastY - e.clientY);
     curNorm = Math.min(1, Math.max(0, curNorm + (lastY - e.clientY) / scale));
     lastY = e.clientY;
     const v = denormParam(def.id, curNorm);
@@ -279,12 +293,59 @@ function attachKnobEvents(knob, def) {
     throttledReadout(def.id, prev, SynthEngine.getPatch()[def.id]);
   }, { passive: false });
 
-  knob.addEventListener('dblclick', () => {
+  const resetToDefault = () => {
     const prev = SynthEngine.getPatch()[def.id];
     setParam(def.id, def.default);
     showBubble(knob, `${fmtValue(def.id, prev)}<span class="arrow">→</span>${fmtValue(def.id, def.default)}（初期値）`);
     bubbleTimer = setTimeout(() => { bubble.hidden = true; }, 900);
     updateReadout(def.id, prev, def.default);
+  };
+  knob.addEventListener('dblclick', resetToDefault);
+
+  // iOS Safariはtouch-action:none下のダブルタップでdblclickが安定発火しないため、
+  // ポインターイベントから自前で検出する（350ms以内・移動6px未満の2連続タップ）。
+  // マウスは従来どおりdblclickに任せる
+  knob.addEventListener('pointerup', (e) => {
+    if (e.pointerType !== 'touch' || dragDist > 6) { lastTapAt = 0; return; }
+    const now = performance.now();
+    if (now - lastTapAt < 350) { lastTapAt = 0; resetToDefault(); }
+    else lastTapAt = now;
+  });
+
+  // キーボード操作（role="slider"の標準操作系）。値変更は既存のsetParamパスを再利用する
+  knob.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // CSSのpointer-events:noneはキーボードを防げないため、試聴中ロックはここでも守る
+    if (document.body.classList.contains('audition-lock')) return;
+    if (document.body.classList.contains('assign-mode')) {
+      if ((e.key === 'Enter' || e.key === ' ') && knob.classList.contains('assignable')) {
+        e.preventDefault();
+        assignTo(def.id);
+      }
+      return;
+    }
+    const prev = SynthEngine.getPatch()[def.id];
+    const stepBy = (dir, coarse) => {
+      if (def.type === 'int') {
+        // 整数ノブは正規化刻みだと丸めで動かないことがあるため、1（粗調整は範囲の1/10）ずつ
+        return prev + dir * (coarse ? Math.max(1, Math.round((def.max - def.min) / 10)) : 1);
+      }
+      const n = normParam(def.id, prev);
+      return denormParam(def.id, Math.min(1, Math.max(0, n + dir * (coarse ? 0.2 : 1 / 50))));
+    };
+    let next;
+    switch (e.key) {
+      case 'ArrowUp': case 'ArrowRight': next = stepBy(1, false); break;
+      case 'ArrowDown': case 'ArrowLeft': next = stepBy(-1, false); break;
+      case 'PageUp': next = stepBy(1, true); break;
+      case 'PageDown': next = stepBy(-1, true); break;
+      case 'Home': next = def.min; break;
+      case 'End': next = def.max; break;
+      default: return;
+    }
+    e.preventDefault();
+    setParam(def.id, next);
+    throttledReadout(def.id, prev, SynthEngine.getPatch()[def.id]);
   });
 }
 
