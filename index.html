@@ -50,38 +50,34 @@
         <section class="block" id="block-oscA">
           <h3 class="block-title">OSC A <span class="tip">音の素材を作る</span></h3>
           <div class="controls" id="controls-oscA"></div>
-          <div class="scope-label"><span>OSC出口: 波形</span><span>スペクトル</span></div>
           <div class="scopes">
-            <canvas id="scope-osc-wave"></canvas>
-            <canvas id="scope-osc-spec"></canvas>
+            <div class="scope"><div class="scope-label">OSC出口: 波形</div><canvas id="scope-osc-wave"></canvas></div>
+            <div class="scope"><div class="scope-label">スペクトル</div><canvas id="scope-osc-spec"></canvas></div>
           </div>
         </section>
         <div class="pipe"><div class="flow"></div></div>
         <section class="block" id="block-filter">
           <h3 class="block-title">FILTER <span class="tip">倍音を削る</span></h3>
           <div class="controls" id="controls-filter"></div>
-          <div class="scope-label"><span>FILTER出口: 波形</span><span>スペクトル</span></div>
           <div class="scopes">
-            <canvas id="scope-filter-wave"></canvas>
-            <canvas id="scope-filter-spec"></canvas>
+            <div class="scope"><div class="scope-label">FILTER出口: 波形</div><canvas id="scope-filter-wave"></canvas></div>
+            <div class="scope"><div class="scope-label">スペクトル</div><canvas id="scope-filter-spec"></canvas></div>
           </div>
         </section>
         <div class="pipe"><div class="flow"></div></div>
         <section class="block" id="block-amp">
           <h3 class="block-title">AMP <span class="tip">音量の時間変化</span></h3>
           <div class="controls"><div class="param" style="width:auto"><div class="p-label">ENV1が音量を制御（固定配線）</div></div></div>
-          <div class="scope-label"><span>AMP出口: 波形</span></div>
           <div class="scopes">
-            <canvas id="scope-amp-wave"></canvas>
+            <div class="scope"><div class="scope-label">AMP出口: 波形</div><canvas id="scope-amp-wave"></canvas></div>
           </div>
         </section>
         <div class="pipe"><div class="flow"></div></div>
         <section class="block" id="block-out">
           <h3 class="block-title">OUT <span class="tip">出口</span></h3>
           <div class="controls" id="controls-master"></div>
-          <div class="scope-label"><span>レベル</span></div>
           <div class="scopes">
-            <canvas id="scope-out-meter"></canvas>
+            <div class="scope"><div class="scope-label">レベル</div><canvas id="scope-out-meter"></canvas></div>
           </div>
         </section>
       </div>

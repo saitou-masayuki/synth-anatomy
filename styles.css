@@ -35,8 +35,9 @@ body {
 .app {
   width: 100%; max-width: 1280px; display: flex; flex-direction: column;
   /* viewport-fit=cover で背景を画面端まで広げているため、ノッチ・ステータスバー・
-     ホームインジケーターの分だけ内側に余白を入れる（notched iPhoneでの重なり対策） */
-  padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+     ホームインジケーターの分だけ内側に余白を入れる（notched iPhoneでの重なり対策）。
+     上端は inset と同値だとノッチ直下に密着するため、常に +6px の逃げを確保する */
+  padding: max(12px, calc(env(safe-area-inset-top) + 6px)) max(20px, env(safe-area-inset-right))
            max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
 }
 
@@ -144,12 +145,14 @@ body.assign-mode .knob.assignable { opacity: 1; cursor: pointer; animation: brea
 #bubble .arrow { color: var(--accent); margin: 0 4px; }
 
 /* ---- スコープ ---- */
+/* ラベルとキャンバスを .scope で1組にする（モバイルで縦積みに切り替えても対応が崩れない） */
 .scopes { display: flex; gap: 6px; }
+.scopes .scope { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .scopes canvas {
   background: var(--scope-bg); border: 1px solid var(--border); border-radius: 6px;
-  width: 100%; height: 64px; min-width: 0; flex: 1;
+  width: 100%; height: 64px; min-width: 0;
 }
-.scope-label { font-size: 9px; color: var(--text-faint); letter-spacing: 0.5px; margin-bottom: -4px; display: flex; justify-content: space-between; }
+.scope-label { font-size: 9px; color: var(--text-faint); letter-spacing: 0.5px; margin-bottom: 3px; display: flex; justify-content: space-between; }
 .scopes canvas.pulse { animation: scope-pulse 0.6s ease-out 2; }
 @keyframes scope-pulse { 0% { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); } 100% { border-color: var(--border); box-shadow: none; } }
 /* ドラッグ中: 触っているノブに対応するスコープを強調し、「触った→ここが変わる」を結びつける */
@@ -311,18 +314,53 @@ footer .lg-mod { color: var(--mod-line); }
   #modRack .block { flex-direction: column; align-items: stretch; }
 }
 
-/* スマホ幅: 2列でもまだ窮屈なので1列に落とし、ノブや鍵盤も少し小さくする */
+/* スマホ幅: 1列に落とし、ヘッダーを3行に再構成、ノブは等幅グリッドで整列させる */
 @media (max-width: 560px) {
   /* ここでも安全領域の余白は保つ（このルールが後勝ちでノッチ対策を打ち消していた） */
   .app {
-    padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+    padding: max(12px, calc(env(safe-area-inset-top) + 6px)) max(10px, env(safe-area-inset-right))
              max(14px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
   }
+
+  /* ヘッダー: 行1=ブランド+さわる/つくる、行2=かんたん/くわしい、行3=プリセット系+テーマ。
+     flex-wrap任せのラグドな折り返し（テーマボタンだけが孤立する等）を頻度順の3行に確定させる */
+  .bar { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 0; }
+  .bar-left { justify-content: space-between; }
+  #viewTabs { display: flex; flex: 1; max-width: 240px; }
+  #viewTabs button { flex: 1; }
+  .bar-right { gap: 8px; }
+  #modeTabs { display: flex; width: 100%; }
+  #modeTabs button { flex: 1; }
+  #presetSelect { flex: 1; min-width: 0; }
+
+  /* 指で確実に押せる高さ（44px）と判読できる文字サイズを確保する */
+  .icon-btn, button.text-btn { font-size: 13px; padding: 9px 12px; min-height: 44px; }
+  select { padding: 9px 12px; min-height: 44px; }
+  .view-tabs button { font-size: 13px; min-height: 44px; }
+  #modeDesc { font-size: 12px; }
+
   #signalRack { grid-template-columns: 1fr; }
-  .param { width: 56px; }
-  .knob { width: 46px; height: 46px; }
-  .scopes canvas { height: 56px; }
-  #kb { height: 92px; }
+
+  /* ノブ列: 固定幅flexの左詰め折り返し（3個+2個のラグド配置）をやめ、等幅グリッドで整列させる */
+  .controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); justify-items: center; gap: 8px 6px; }
+  .param { width: auto; min-width: 0; }
+  .select-wrap { grid-column: span 2; width: 100%; }
+  #block-amp .controls .param { grid-column: 1 / -1; justify-self: start; }
+  .param .p-label, .param .p-value { font-size: 11px; }
+
+  /* 波形とスペクトルを縦に積み、対数周波数軸の目盛り間隔が読める幅を確保する */
+  .scopes { flex-direction: column; gap: 8px; }
+  .scopes .scope { flex: none; }
+  .scope-label { font-size: 10px; }
+
+  button.assign-btn { padding: 10px 14px; min-height: 44px; }
+  .mod-assign .chip { padding: 6px 12px; }
+  .mod-assign .chip button { padding: 4px 6px; }
+  .check-btn, .lesson-actions button, .hint-btn { min-height: 44px; }
+
+  /* 案内バナー: 文章を1行目全幅にして、ボタン2つを2行目にまとめる（片方だけ孤立させない） */
+  #introBanner span { flex-basis: 100%; }
+
   .lesson-cards { grid-template-columns: 1fr; }
   #readout { flex-direction: column; gap: 6px; }
   #readout .ro-badge { align-self: flex-start; }
@@ -348,10 +386,14 @@ footer .lg-mod { color: var(--mod-line); }
   }
   #kb { height: 86px; }
   .kb-hint {
+    font-size: 11px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* iOS Safariはフォント16px未満のフォーム部品にフォーカスすると画面ごとズームするため、
+     モバイルではselectだけ16pxに引き上げる（maximum-scaleでズームを殺すより安全） */
+  select { font-size: 16px; }
 }
 
 @media (max-width: 640px) and (max-height: 560px) {
