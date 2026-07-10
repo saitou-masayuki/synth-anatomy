@@ -889,6 +889,15 @@ let compareTimer = null;
 // お手本ゴーストの撮影予約タイマー。試聴が中断された後に発火すると、ユーザー自身の
 // 音を「お手本」として焼き付けてしまうため、これも必ず破棄する
 let ghostTimer = null;
+let ghostCaptureToken = 0;
+
+// clearTimeoutより先にコールバックが実行キューへ移っていても、古い世代の撮影を
+// 無効化できるようトークンも進める
+function cancelTargetGhostCapture() {
+  ghostCaptureToken += 1;
+  clearTimeout(ghostTimer);
+  ghostTimer = null;
+}
 
 // お手本再生中であることをスコープの枠色でも示す（いま映っているのはお手本の音）
 function setAuditionTargetView(on) {
@@ -899,8 +908,7 @@ function setAuditionTargetView(on) {
 function stopAudition() {
   clearTimeout(compareTimer);
   compareTimer = null;
-  clearTimeout(ghostTimer);
-  ghostTimer = null;
+  cancelTargetGhostCapture();
   setAuditionTargetView(false);
   SynthEngine.stopPhrase();
   document.body.classList.remove('audition-lock');
@@ -911,9 +919,13 @@ function stopAudition() {
 function scheduleTargetGhostCapture(audition) {
   return (i) => {
     if (i !== audition.notes.length - 1) return;
-    clearTimeout(ghostTimer);
+    cancelTargetGhostCapture();
+    const token = ghostCaptureToken;
     ghostTimer = setTimeout(() => {
       ghostTimer = null;
+      // 非表示タブではタイマーが大幅に遅延し得る。お手本パッチの復元後や
+      // 新しい試聴へ移った後なら、現在のAnalyserをお手本として撮影しない
+      if (token !== ghostCaptureToken || !SynthEngine.auditioning || document.hidden) return;
       Viz.captureTargetGhosts();
     }, audition.dur * 500);
   };
@@ -1052,6 +1064,7 @@ function renderMake(body) {
       patch: targetFull,
       onNoteOn: scheduleTargetGhostCapture(r.audition),
       onDone: () => {
+        cancelTargetGhostCapture();
         setAuditionTargetView(false);
         document.body.classList.remove('audition-lock');
       },
@@ -1074,6 +1087,7 @@ function renderMake(body) {
       patch: targetFull,
       onNoteOn: scheduleTargetGhostCapture(r.audition),
       onDone: () => {
+        cancelTargetGhostCapture();
         setAuditionTargetView(false);
         compareTimer = setTimeout(() => {
           compareTimer = null;
