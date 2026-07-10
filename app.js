@@ -648,6 +648,24 @@ function noteOff(note) {
 
 // 指（ポインター）ごとに押鍵を管理し、離した指の音だけを止める（chord-lab実績パターン）
 const pointerHeld = new Map();
+const pcHeld = new Map();
+
+// 試聴フレーズへ入る前に、入力元の管理表とエンジンのノートスタックをまとめて解放する。
+// 同じ音を複数入力で押していても、エンジンへは最初の1回だけnoteOnしているため
+// noteRefsに残るノートごとにnoteOffを1回送れば対応が取れる
+function releaseHeldPerformanceNotes() {
+  const notes = [...noteRefs.keys()];
+  pcHeld.clear();
+  pointerHeld.clear();
+  noteRefs.clear();
+  for (const note of notes) {
+    SynthEngine.noteOff(note);
+    const r = kbRects.get(note);
+    if (r) r.classList.remove('on');
+  }
+  document.body.classList.remove('playing');
+}
+
 function setupKeyboardInput() {
   $('kb').addEventListener('pointerdown', (e) => {
     const attr = e.target.getAttribute && e.target.getAttribute('data-note');
@@ -685,13 +703,14 @@ function setupKeyboardInput() {
     KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16,
   };
   let pcBase = 60;
-  const pcHeld = new Map();
   document.addEventListener('keydown', (e) => {
     if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
     // Escapeはフォーカス位置に関係なく割当モードを解除する（SELECT系ガードより先に判定）
     if (e.code === 'Escape') { exitAssignMode(); return; }
     const t = e.target;
     if (t && t.tagName && /^(SELECT|INPUT|TEXTAREA)$/.test(t.tagName)) return;
+    // keyupは下の別リスナーで常に受け、試聴開始前から押されていたキーも解放できるようにする
+    if (document.body.classList.contains('audition-lock')) return;
     if (e.code === 'KeyZ') { pcBase = Math.max(24, pcBase - 12); return; }
     if (e.code === 'KeyX') { pcBase = Math.min(84, pcBase + 12); return; }
     const offset = PC_KEYMAP[e.code];
@@ -710,10 +729,7 @@ function setupKeyboardInput() {
   // ドラッグ中のノブも同様に強制終了する（pointerup/pointercancelが届かないまま
   // dragging状態やスコープの強調表示が残留するのを防ぐ）
   window.addEventListener('blur', () => {
-    for (const [, note] of pcHeld) noteOff(note);
-    pcHeld.clear();
-    for (const [, note] of pointerHeld) noteOff(note);
-    pointerHeld.clear();
+    releaseHeldPerformanceNotes();
     for (const endDrag of [...activeKnobDrags]) endDrag();
   });
 }
@@ -907,6 +923,11 @@ function setAuditionTargetView(on) {
   document.body.classList.toggle('audition-target', on);
 }
 
+function playAuditionPhrase(audition, opts) {
+  releaseHeldPerformanceNotes();
+  return SynthEngine.playPhrase(audition, opts);
+}
+
 // 試聴（お手本/いまの音）を中断し、UIロックも解除する
 function stopAudition() {
   clearTimeout(compareTimer);
@@ -1065,7 +1086,7 @@ function renderMake(body) {
     persistNow();
     document.body.classList.add('audition-lock');
     setAuditionTargetView(true);
-    SynthEngine.playPhrase(r.audition, {
+    playAuditionPhrase(r.audition, {
       patch: targetFull,
       onNoteOn: scheduleTargetGhostCapture(r.audition),
       onDone: () => {
@@ -1077,7 +1098,7 @@ function renderMake(body) {
   });
   const btnCurrent = el('button', null, 'いまの音を聴く');
   btnCurrent.type = 'button';
-  btnCurrent.addEventListener('click', () => { stopAudition(); SynthEngine.playPhrase(r.audition); });
+  btnCurrent.addEventListener('click', () => { stopAudition(); playAuditionPhrase(r.audition); });
   // 音色の記憶は数秒しか持たないため、お手本→いまの音を短い間隔で連続再生して
   // 差をその場で聴き比べられるようにする
   const btnCompare = el('button', null, '聴き比べ');
@@ -1089,7 +1110,7 @@ function renderMake(body) {
     setAuditionTargetView(true);
     $('roAction').textContent = 'お手本を再生中…';
     $('roDetail').textContent = 'つづけて、いまの音が鳴ります。違いを探しながら聴いてみましょう。';
-    SynthEngine.playPhrase(r.audition, {
+    playAuditionPhrase(r.audition, {
       patch: targetFull,
       onNoteOn: scheduleTargetGhostCapture(r.audition),
       onDone: () => {
@@ -1098,7 +1119,7 @@ function renderMake(body) {
         compareTimer = setTimeout(() => {
           compareTimer = null;
           $('roAction').textContent = 'つづけて、いまの音…';
-          SynthEngine.playPhrase(r.audition, {
+          playAuditionPhrase(r.audition, {
             onDone: () => document.body.classList.remove('audition-lock'),
           });
         }, 400);
