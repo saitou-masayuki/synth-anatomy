@@ -9,6 +9,7 @@
   --mod-line: #E0AF68;         /* モジュレーション線の色（別ヒュー） */
   --env-line: #9ECE6A;         /* ENV線の色 */
   --scope-wave: #7AA2F7; --scope-spec: #9ECE6A; --scope-ghost: #5A6070;
+  --scope-target: #E0AF68;     /* お手本ゴースト（診断チャレンジの目標音の破線） */
   --scope-bg: #0D0F14; --scope-grid: #232732;
   --kb-bg: #0D0F14; --white-key: #F5F3EF; --black-key: #1A1A1E; --key-stroke: #44444C;
   --key-active: #7AA2F7;
@@ -21,6 +22,7 @@
   --ok: #2E8B57; --ng: #C26A2E;
   --audio-line: #3465C9; --mod-line: #C98A1F; --env-line: #2E8B57;
   --scope-wave: #3465C9; --scope-spec: #2E8B57; --scope-ghost: #B5B4AC;
+  --scope-target: #C98A1F;
   --scope-bg: #FAFAF7; --scope-grid: #E4E3DC;
   --kb-bg: #E8E7E2; --white-key: #FFFFFF; --black-key: #2A2A30; --key-stroke: #B9B8B0;
   --key-active: #3465C9;
@@ -159,6 +161,8 @@ body.assign-mode .knob.assignable { opacity: 1; cursor: pointer; animation: brea
 @keyframes scope-pulse { 0% { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); } 100% { border-color: var(--border); box-shadow: none; } }
 /* ドラッグ中: 触っているノブに対応するスコープを強調し、「触った→ここが変わる」を結びつける */
 .scopes canvas.active { border-color: var(--accent); box-shadow: 0 0 7px 1px var(--accent-dark); }
+/* お手本再生中: いまスコープに映っているのはお手本の音であることを枠色で示す */
+body.audition-target .scopes canvas { border-color: var(--scope-target); }
 
 /* ---- モジュレーターラック ---- */
 #modRack .block { flex-direction: row; align-items: flex-start; gap: 14px; }
@@ -257,6 +261,10 @@ body.audition-lock #signalRack, body.audition-lock #modRack, body.audition-lock 
 /* お手本試聴・答え合わせが使う実ブロック（信号ラック）に、近づくほど濃く見える枠を付ける。
    色は使わず、線の太さと発光の強さだけで「近さ」を表す（setProximity()がJSから直接指定） */
 #signalRack .block, #modRack .block { transition: border-width .2s, box-shadow .3s; }
+
+/* お手本ゴーストの説明（点線の意味）。色見本として文頭の「点線」をターゲット色にする */
+.ghost-note { font-size: 11px; color: var(--text-faint); margin: -4px 0 10px; line-height: 1.5; }
+.ghost-note::before { content: '- - -'; color: var(--scope-target); letter-spacing: 1px; margin-right: 6px; }
 
 .check-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; flex-wrap: wrap; }
 .check-btn {

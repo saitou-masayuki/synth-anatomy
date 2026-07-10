@@ -846,13 +846,37 @@ function lessonRequiredParamIds(target) {
 // 聴き比べの「お手本→いまの音」連結タイマー。中断漏れがあると、別の操作の最中に
 // 突然2本目の再生が始まってしまうため、stopAudition()で必ず破棄する
 let compareTimer = null;
+// お手本ゴーストの撮影予約タイマー。試聴が中断された後に発火すると、ユーザー自身の
+// 音を「お手本」として焼き付けてしまうため、これも必ず破棄する
+let ghostTimer = null;
+
+// お手本再生中であることをスコープの枠色でも示す（いま映っているのはお手本の音）
+function setAuditionTargetView(on) {
+  document.body.classList.toggle('audition-target', on);
+}
 
 // 試聴（お手本/いまの音）を中断し、UIロックも解除する
 function stopAudition() {
   clearTimeout(compareTimer);
   compareTimer = null;
+  clearTimeout(ghostTimer);
+  ghostTimer = null;
+  setAuditionTargetView(false);
   SynthEngine.stopPhrase();
   document.body.classList.remove('audition-lock');
+}
+
+// お手本フレーズの最終ノートの持続部（アタックの過渡が落ち着いた頃）で
+// 波形/スペクトルのスナップショットを撮る予約を入れる
+function scheduleTargetGhostCapture(audition) {
+  return (i) => {
+    if (i !== audition.notes.length - 1) return;
+    clearTimeout(ghostTimer);
+    ghostTimer = setTimeout(() => {
+      ghostTimer = null;
+      Viz.captureTargetGhosts();
+    }, audition.dur * 500);
+  };
 }
 
 // ---- モード切替 ----
@@ -865,6 +889,7 @@ function applyView(view) {
     clearProximityFrames();
     markLessonRequiredParams([]);
     if (lesson.idleTimer) clearTimeout(lesson.idleTimer);
+    Viz.clearTargetGhosts(); // さわるへ移ったらお手本の破線は不要
   }
   exitAssignMode();
   lesson.view = view;
@@ -982,9 +1007,14 @@ function renderMake(body) {
     // 再生中はエンジンのパッチがお手本に一時差し替わるため、ノブ操作をロックする
     stopAudition();
     document.body.classList.add('audition-lock');
+    setAuditionTargetView(true);
     SynthEngine.playPhrase(r.audition, {
       patch: targetFull,
-      onDone: () => document.body.classList.remove('audition-lock'),
+      onNoteOn: scheduleTargetGhostCapture(r.audition),
+      onDone: () => {
+        setAuditionTargetView(false);
+        document.body.classList.remove('audition-lock');
+      },
     });
   });
   const btnCurrent = el('button', null, 'いまの音を聴く');
@@ -997,11 +1027,14 @@ function renderMake(body) {
   btnCompare.addEventListener('click', () => {
     stopAudition();
     document.body.classList.add('audition-lock');
+    setAuditionTargetView(true);
     $('roAction').textContent = 'お手本を再生中…';
     $('roDetail').textContent = 'つづけて、いまの音が鳴ります。違いを探しながら聴いてみましょう。';
     SynthEngine.playPhrase(r.audition, {
       patch: targetFull,
+      onNoteOn: scheduleTargetGhostCapture(r.audition),
       onDone: () => {
+        setAuditionTargetView(false);
         compareTimer = setTimeout(() => {
           compareTimer = null;
           $('roAction').textContent = 'つづけて、いまの音…';
@@ -1016,6 +1049,7 @@ function renderMake(body) {
   btnBack.type = 'button';
   btnBack.addEventListener('click', () => {
     stopAudition();
+    Viz.clearTargetGhosts();
     clearProximityFrames();
     markLessonRequiredParams([]);
     if (lesson.idleTimer) clearTimeout(lesson.idleTimer);
@@ -1061,6 +1095,10 @@ function renderMake(body) {
   }
 
   markLessonRequiredParams(lessonRequiredParamIds(r.target));
+
+  // お手本ゴーストの説明（ノブの目標値は明かさず、音の指紋だけを見せている）
+  body.appendChild(el('div', 'ghost-note',
+    '点線＝お手本のスナップショット。「お手本を聴く」と波形・スペクトルに焼き付き、自分の音と重ねて見比べられます。'));
 
   // 答え合わせ（いつでも押せる。ブロック単位のズレ件数だけを返し、パラメーター名や数値は明かさない）
   const checkRow = el('div', 'check-row');
@@ -1163,6 +1201,7 @@ function doCheck() {
 
 function startRecipe(r) {
   stopAudition();
+  Viz.clearTargetGhosts(); // 前の課題のお手本が残っていると混ざって見えるため消す
   SynthEngine.applyPatch(Object.assign(defaultPatch(), r.init));
   refreshAfterPatchApply();
   lesson.recipe = r;

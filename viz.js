@@ -9,6 +9,7 @@ var Viz = (() => {
   const waveBufs = {};   // タップ名 → Float32Array（使い回し。GC圧回避）
   const specBufs = {};
   const ghosts = {};     // スコープ名 → { wave, spec, holdUntil }
+  const targetGhosts = {}; // スコープ名 → {buf, start?}（お手本のスナップショット。破線で常時表示）
   let ghostHold = false;
   let ghostUntil = 0;
   let frameCount = 0;
@@ -69,6 +70,8 @@ var Viz = (() => {
     g.moveTo(0, c.h / 2);
     g.lineTo(c.w, c.h / 2);
     g.stroke();
+    const tGhost = targetGhosts[name];
+    if (tGhost) drawWavePath(g, tGhost.buf, tGhost.start, c, cssVar('--scope-target'), true);
     const ghost = ghostActive() && ghosts[name] && ghosts[name].wave;
     if (ghost) drawWavePath(g, ghost.buf, ghost.start, c, cssVar('--scope-ghost'), true);
     drawWavePath(g, buf, start, c, cssVar('--scope-wave'), false);
@@ -108,6 +111,8 @@ var Viz = (() => {
       const x = freqToX(f, c.w);
       g.beginPath(); g.moveTo(x, 0); g.lineTo(x, c.h); g.stroke();
     }
+    const tGhost = targetGhosts[name];
+    if (tGhost) drawSpecPath(g, tGhost.buf, c, sampleRate, cssVar('--scope-target'), true);
     const ghost = ghostActive() && ghosts[name] && ghosts[name].spec;
     if (ghost) drawSpecPath(g, ghost.buf, c, sampleRate, cssVar('--scope-ghost'), true);
     drawSpecPath(g, buf, c, sampleRate, cssVar('--scope-spec'), false);
@@ -384,6 +389,32 @@ var Viz = (() => {
     ghostUntil = performance.now() + 2000;
   }
 
+  // ---- お手本ゴースト（診断チャレンジ: 目標音の波形/スペクトルを破線で焼き付ける） ----
+  // お手本試聴中はエンジンのパッチが実際に目標へ差し替わっているため、そのとき
+  // Analyserに流れているバッファを写せば「目標の音の指紋」がそのまま手に入る。
+  // ノブの目標値は一切明かさない（見せるのは音の結果だけ）
+
+  function captureTargetGhosts() {
+    for (const name of ['osc-wave', 'filter-wave']) {
+      const buf = waveBufs[name];
+      if (!buf) continue;
+      let start = 0;
+      for (let i = 1; i < buf.length / 2; i++) {
+        if (buf[i - 1] <= 0 && buf[i] > 0) { start = i; break; }
+      }
+      targetGhosts[name] = { buf: Float32Array.from(buf), start };
+    }
+    for (const name of ['osc-spec', 'filter-spec']) {
+      const buf = specBufs[name];
+      if (!buf) continue;
+      targetGhosts[name] = { buf: Uint8Array.from(buf) };
+    }
+  }
+
+  function clearTargetGhosts() {
+    for (const k of Object.keys(targetGhosts)) delete targetGhosts[k];
+  }
+
   // ---- スコープ枠のパルス点灯（説明パネルの「どこを見るか」との連動） ----
 
   const SCOPE_MAP = {
@@ -474,6 +505,8 @@ var Viz = (() => {
     updateGeometry,
     snapshotGhosts,
     releaseGhosts,
+    captureTargetGhosts,
+    clearTargetGhosts,
     pulseScope,
     setScopeActive,
     invalidateThemeCache,

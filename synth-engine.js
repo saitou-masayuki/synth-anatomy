@@ -450,7 +450,8 @@ var SynthEngine = (() => {
   }
 
   // audition: { notes: MIDIノート番号列, dur: 1音の長さ秒 }
-  // opts.patch: 一時的に差し替えるパッチ（再生後に元へ戻す）。opts.onDone: 完了コールバック
+  // opts.patch: 一時的に差し替えるパッチ（再生後に元へ戻す）。opts.onDone: 完了コールバック。
+  // opts.onNoteOn(i, note): 各ノートの発音タイミングで呼ぶ（お手本ゴーストの撮影予約などに使う）
   function playPhrase(audition, opts) {
     if (!ensureAudio()) return;
     stopPhrase();
@@ -462,7 +463,11 @@ var SynthEngine = (() => {
     const dur = audition.dur;
     const gap = 0.08;
     audition.notes.forEach((note, i) => {
-      phraseTimers.push(setTimeout(() => { phraseNotes.add(note); noteOn(note); }, i * (dur + gap) * 1000));
+      phraseTimers.push(setTimeout(() => {
+        phraseNotes.add(note);
+        noteOn(note);
+        if (o.onNoteOn) o.onNoteOn(i, note);
+      }, i * (dur + gap) * 1000));
       phraseTimers.push(setTimeout(() => { phraseNotes.delete(note); noteOff(note); }, (i * (dur + gap) + dur) * 1000));
     });
     // リリースの尾が鳴り終わってからパッチを戻す（戻しが早いと余韻の音色が変わってしまう）
