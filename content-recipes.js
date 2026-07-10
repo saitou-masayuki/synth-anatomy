@@ -9,6 +9,8 @@
 //              対象はrecipeTargetBlocks(target)で機械的に求まるため、ここには
 //              その全ブロックぶんのヒントを過不足なく用意する（test/content.test.mjsが検証）
 //   insight   完成後に表示する、その音の核心となる因果関係の一言
+//   tol       （任意）答え合わせの許容誤差の上書き。半音1個のズレ（正規化1/24≒0.042）を
+//             区別したい課題などで、既定のRECIPE_DEFAULT_TOL(0.06)より狭める
 //
 // ヒント段階2（「まだズレているブロック」の提示）は、recipeJudgeAll()で実行時に
 // 動的に求まるため、コンテンツとしては持たない。
@@ -52,11 +54,39 @@ var RECIPES = [
     insight: 'カットオフを大胆に下げると、こもりが太さに変わります。これがベースの丸さの正体でした。',
   },
   {
+    id: 'thin-hp',
+    title: 'うすい音',
+    goal: '低音の土台を抜いた、軽くてうすい音',
+    difficulty: 1, order: 3,
+    audition: { notes: [72, 76, 79, 76], dur: 0.4 },
+    init: {},
+    target: { 'filter.type': 'hp12', 'filter.cutoff': 900 },
+    approach: '音の下のほう（低音の土台）が、あるかないかを聴いてみましょう',
+    blockHints: {
+      filter: 'フィルターのタイプを変えてみて。ローパスとは逆に、下を削る方式があります。カットオフで削る量を調整します',
+    },
+    insight: 'ハイパスは低域を削るフィルターです。土台が消えると、同じ波形でも軽くうすい音になります。',
+  },
+  {
+    id: 'radio',
+    title: 'ラジオの音',
+    goal: '古いラジオから流れてくるような、細くこもった音',
+    difficulty: 1, order: 4,
+    audition: { notes: [60, 64, 67, 64], dur: 0.35 },
+    init: {},
+    target: { 'filter.type': 'bp12', 'filter.cutoff': 1200, 'filter.reso': 0.5 },
+    approach: '高い成分と低い成分、どちらが残っているか——それとも両方ともないか、聴いてみましょう',
+    blockHints: {
+      filter: 'カットオフ付近だけを残すタイプに変えて、1kHz前後に合わせてみて。レゾナンスを上げると細さが際立ちます',
+    },
+    insight: 'バンドパスは真ん中だけ残すフィルターです。上も下も削れると、電話やラジオの音になります。',
+  },
+  {
     id: 'tremolo',
     title: 'トレモロ',
     goal: '音量が周期的に揺れる、ゆらゆらした音',
     // 関わるブロックが5つ・配線も必須で、wobble/vibrato-leadと同等の複雑さのため2（ふつう）に統一
-    difficulty: 2, order: 3,
+    difficulty: 2, order: 5,
     audition: { notes: [64, 60, 57], dur: 1.0 },
     init: {},
     target: {
@@ -78,7 +108,7 @@ var RECIPES = [
     id: 'wobble',
     title: 'ウォブルベース',
     goal: '「ワウワウ」とうなる、動きのあるベース',
-    difficulty: 2, order: 4,
+    difficulty: 2, order: 6,
     audition: { notes: [36, 36, 39, 43], dur: 0.55 },
     init: {},
     target: {
@@ -97,10 +127,31 @@ var RECIPES = [
     insight: 'LFOをカットオフにつなぐと、フィルターが自動で開閉します。これがウォブルの正体でした。',
   },
   {
+    id: 'random-wah',
+    title: 'きまぐれワウ',
+    goal: '明るさがランダムにパッパッと切り替わる、機械じかけの音',
+    difficulty: 2, order: 7,
+    audition: { notes: [48, 48, 51], dur: 1.2 },
+    init: {},
+    target: {
+      'filter.cutoff': 900, 'filter.reso': 0.45, 'ampEnv.sustain': 1,
+      'mod1.src': 'lfo1', 'mod1.dst': 'filter.cutoff', 'mod1.amt': 0.6,
+      'lfo1.shape': 'sh', 'lfo1.rateHz': 6,
+    },
+    approach: '揺れがなめらかか、カクカクか。規則的か、ランダムかを聴いてみましょう',
+    blockHints: {
+      filter: 'カットオフを下げてレゾナンスを上げ、揺れがよく聞こえる土台を作ってみて',
+      ampEnv: 'サステインを上げて、鳴りっぱなしにしてみて',
+      mod: '変調元をLFO1に、変調先をカットオフにつないでみて',
+      lfo1: '波形を変えてみて。周期ごとにランダムな値へ飛ぶ波形があります。速さは6Hzくらい',
+    },
+    insight: 'LFOの波形を変えると、同じ配線でも揺れの性格が一変します。S&Hは周期ごとにランダムな値へ飛ぶ波形です。',
+  },
+  {
     id: 'vibrato-lead',
     title: 'ビブラート・リード',
     goal: '歌うように音程が揺れるリード',
-    difficulty: 2, order: 5,
+    difficulty: 2, order: 8,
     audition: { notes: [67, 69, 71], dur: 0.7 },
     init: {},
     target: {
@@ -120,10 +171,47 @@ var RECIPES = [
     insight: 'LFOをピッチにごくわずかにつなぐと、歌うような揺れが生まれます。これがビブラートの正体でした。',
   },
   {
+    id: 'tune-up',
+    title: 'チューニング',
+    goal: 'ズレてしまった音の高さを、お手本とぴったり合わせる',
+    difficulty: 2, order: 9,
+    // 既定の許容誤差(0.06)だと半音1個のズレ（正規化1/24≒0.042）が合格してしまうため狭める。
+    // 0.04ならファインは±8セント（うなりを聴けば十分合わせられる精度）
+    tol: 0.04,
+    audition: { notes: [57, 60, 64, 60], dur: 0.5 },
+    init: { 'oscA.semi': 4, 'oscA.fine': -35 },
+    target: { 'oscA.semi': 0, 'oscA.fine': 0 },
+    approach: 'お手本と交互に聴いて、高さのズレを探してみましょう。大きなズレと、ごくわずかなズレの2段階あります',
+    blockHints: {
+      oscA: 'まず半音ノブで大きなズレを合わせ、次にファインノブで「うなり」が消えるまで微調整してみて',
+    },
+    insight: '半音は音程の単位、セントはその100分の1です。実機では2つのオシレーターのファインをわずかにズラして厚みを作ります。',
+  },
+  {
+    id: 'siren',
+    title: 'サイレン',
+    goal: '音程がくり返しせり上がる、警報のような音',
+    difficulty: 2, order: 10,
+    audition: { notes: [69], dur: 5 },
+    init: {},
+    target: {
+      'ampEnv.sustain': 1,
+      'mod1.src': 'lfo1', 'mod1.dst': 'oscA.pitch', 'mod1.amt': 0.5,
+      'lfo1.shape': 'saw', 'lfo1.rateHz': 0.6,
+    },
+    approach: '音程の動きが「往復」なのか「一方通行のくり返し」なのか聴いてみましょう',
+    blockHints: {
+      ampEnv: 'サステインを上げて、鳴りっぱなしにしてみて',
+      mod: '変調元をLFO1に、変調先をピッチにつないでみて。ビブラートよりずっと深くします',
+      lfo1: '徐々に上がって一気に戻る波形にして、速さはかなりゆっくりに',
+    },
+    insight: 'ノコギリ波のLFOは「上がって、一気に戻る」を繰り返します。深いピッチ変調と組むとサイレンやライザーになります。',
+  },
+  {
     id: 'wt-pad',
     title: 'WTモーション・パッド',
     goal: '音色そのものがゆっくり変わり続けるパッド',
-    difficulty: 3, order: 6,
+    difficulty: 3, order: 11,
     audition: { notes: [57], dur: 6 },
     init: {},
     target: {

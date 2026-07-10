@@ -1066,10 +1066,11 @@ function hintButtonLabel() {
   return n >= 3 ? 'ヒントを見る（3/3・すべて開きました）' : `ヒントを見る（${n + 1}/3）`;
 }
 
-// 現在のパッチをtargetと突き合わせ、ズレているブロック名（表示用ラベル）を返す
+// 現在のパッチをtargetと突き合わせ、ズレているブロック名（表示用ラベル）を返す。
+// レシピが tol を持つ場合はそちらを優先する（チューニング課題など、既定より厳しい判定）
 function currentMismatchBlocks() {
   if (!lesson.recipe) return [];
-  return recipeJudgeAll(SynthEngine.getPatch(), lesson.recipe.target);
+  return recipeJudgeAll(SynthEngine.getPatch(), lesson.recipe.target, lesson.recipe.tol);
 }
 
 function mismatchText(off) {
