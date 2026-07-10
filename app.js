@@ -21,6 +21,7 @@ if (settings.theme !== 'light' && settings.theme !== 'dark') settings.theme = 'd
 if (settings.mode !== 'simple' && settings.mode !== 'full') settings.mode = 'simple';
 if (!['play', 'make'].includes(settings.view)) settings.view = 'play';
 if (!settings.recipesDone || typeof settings.recipesDone !== 'object' || Array.isArray(settings.recipesDone)) settings.recipesDone = {};
+if (!settings.onboard || typeof settings.onboard !== 'object' || Array.isArray(settings.onboard)) settings.onboard = {};
 settings.introSeen = settings.introSeen === true;
 
 let saveTimer = null;
@@ -358,7 +359,37 @@ function updateReadout(id, prev, next) {
   if (!d) return;
   $('roAction').textContent = d.action;
   $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">見る場所: ${escapeHtml(d.watch)}</span>`;
+  onboardAfterFirstChange(id);
   flashReadout();
+}
+
+// ---------- さわるモードのマイクロオンボーディング ----------
+// 初回の導線を説明パネル（readout）が担う: ①初めて鳴らす→ノブへ ②初めて回す→配線へ
+// ③初めて配線→つくるへ。describeChangeの説明は常に優先し、ここでは操作待ちの
+// 初期文言の差し替えと、一度きりの追記だけを行う（進み具合はlocalStorageに永続化）
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+function noteName(midi) {
+  return NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+}
+
+function onboardOnPlay(note) {
+  if (lesson.view !== 'play' || SynthEngine.auditioning) return;
+  if (!settings.onboard.played) { settings.onboard.played = true; saveSettings(); }
+  // 説明パネルがまだ「鍵盤を弾いてみよう」のままなら、演奏に反応して次の一歩を示す
+  if ($('roAction').textContent === '鍵盤を弾いてみよう') {
+    $('roAction').textContent = `${noteName(note)} が鳴っています`;
+    $('roDetail').textContent = '鳴らしながら、FILTERのカットオフを回してみましょう。音とスペクトルが同時に変わります。';
+  }
+}
+
+function onboardAfterFirstChange(id) {
+  if (lesson.view !== 'play' || settings.onboard.turned) return;
+  settings.onboard.turned = true;
+  saveSettings();
+  if (!id.startsWith('mod1.')) {
+    $('roDetail').innerHTML += '　次は「LFO1をノブにつなぐ」で、ノブが自動で揺れる仕掛けも作れます';
+  }
 }
 
 // 説明パネルの更新を短いフラッシュで知らせる（アニメーションを毎回リスタートさせる）
@@ -421,6 +452,14 @@ function assignTo(knobParamId) {
   if (d) $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">見る場所: ${escapeHtml(d.watch)}</span>`;
   if (dest === 'oscA.wtPos' && SynthEngine.getPatch()['oscA.wave'] !== 'wt.basic') {
     $('roDetail').innerHTML += '　※WT位置の揺れは、波形を「WTベーシック」にすると音に効きます';
+  }
+  // 初めて配線できたら、次の行き先（つくる）を一度だけ案内する
+  if (!settings.onboard.wired) {
+    settings.onboard.wired = true;
+    saveSettings();
+    if (lesson.view === 'play') {
+      $('roDetail').innerHTML += '　準備ができたら、上の「つくる」で課題にも挑戦してみましょう';
+    }
   }
 }
 
@@ -591,6 +630,7 @@ function noteOn(note) {
   const r = kbRects.get(note);
   if (r) r.classList.add('on');
   document.body.classList.add('playing');
+  onboardOnPlay(note);
 }
 
 function noteOff(note) {
