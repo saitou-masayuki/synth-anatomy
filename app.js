@@ -378,20 +378,39 @@ function noteName(midi) {
 
 function onboardOnPlay(note) {
   if (lesson.view !== 'play' || SynthEngine.auditioning) return;
-  if (!settings.onboard.played) { settings.onboard.played = true; saveSettings(); }
-  // 説明パネルがまだ「鍵盤を弾いてみよう」のままなら、演奏に反応して次の一歩を示す
-  if ($('roAction').textContent === '鍵盤を弾いてみよう') {
-    $('roAction').textContent = `${noteName(note)} が鳴っています`;
-    $('roDetail').textContent = '鳴らしながら、FILTERのカットオフを回してみましょう。音とスペクトルが同時に変わります。';
-  }
+  // 後の段階まで済んでいる既存データも含め、完了済みの「初めて鳴らす」は再実行しない
+  if (settings.onboard.played || settings.onboard.turned || settings.onboard.wired) return;
+  settings.onboard.played = true;
+  saveSettings();
+  $('roAction').textContent = `${noteName(note)} が鳴っています`;
+  $('roDetail').textContent = '鳴らしながら、FILTERのカットオフを回してみましょう。音とスペクトルが同時に変わります。';
 }
 
 function onboardAfterFirstChange(id) {
-  if (lesson.view !== 'play' || settings.onboard.turned) return;
+  if (lesson.view !== 'play' || settings.onboard.turned || settings.onboard.wired) return;
   settings.onboard.turned = true;
   saveSettings();
   if (!id.startsWith('mod1.')) {
     $('roDetail').innerHTML += '　次は「LFO1をノブにつなぐ」で、ノブが自動で揺れる仕掛けも作れます';
+  }
+}
+
+// 保存済みの進捗から、次に試す操作を説明パネルへ復元する。
+// 後段の完了を優先することで、途中データでも前の案内へ巻き戻さない。
+function restoreOnboardPrompt() {
+  if (lesson.view !== 'play') return;
+  if (settings.onboard.wired) {
+    $('roAction').textContent = '音作りを続けてみよう';
+    $('roDetail').textContent = 'ノブとLFOの配線を自由に試せます。準備ができたら、上の「つくる」で課題にも挑戦してみましょう。';
+  } else if (settings.onboard.turned) {
+    $('roAction').textContent = 'LFO1をノブにつないでみよう';
+    $('roDetail').textContent = '「LFO1をノブにつなぐ」を押すと、選んだノブを自動で揺らせます。';
+  } else if (settings.onboard.played) {
+    $('roAction').textContent = 'FILTERのカットオフを回してみよう';
+    $('roDetail').textContent = '鍵盤を鳴らしながら回すと、音とスペクトルが同時に変わります。';
+  } else {
+    $('roAction').textContent = '鍵盤を弾いてみよう';
+    $('roDetail').textContent = '音が出たらノブを回すと、ここに「何をしたか・音がどうなるか・どこを見るか」が表示されます。PCキーボード（A W S E D…）でも演奏できます。';
   }
 }
 
@@ -978,6 +997,7 @@ function applyView(view) {
   updateIntroBanner();
   $('lessonPanel').hidden = view === 'play';
   renderLesson(); // renderMakeが挑戦中の状態（発展パラメーター表示等）を正しく反映する
+  if (view === 'play') restoreOnboardPrompt();
   if (view === 'make' && lesson.recipe && !lesson.done) {
     applyProximityFrames();
     armStallTimer();
