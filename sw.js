@@ -25,7 +25,10 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) return;
   e.respondWith(
-    fetch(e.request)
+    // cache:'no-cache' でHTTPキャッシュに必ず再検証させる。キャッシュヘッダーを返さない
+    // ホスティングだと、ヒューリスティックキャッシュが古いファイルを「新鮮」とみなして
+    // fetchがネットワークに出ず、ネットワーク優先の意図が崩れるため
+    fetch(e.request, { cache: 'no-cache' })
       .then((res) => {
         // 成功した同一オリジン応答だけをキャッシュする。4xx/5xxやopaque応答まで
         // 保存すると、オフライン時にエラーページが配信され続けてしまう

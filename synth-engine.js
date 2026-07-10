@@ -128,10 +128,22 @@ var SynthEngine = (() => {
     nodes = n;
     applyWave(patch['oscA.wave'], true);
     applyFilter();
-    applyModRouting();
-    // S&H・wtPos変調は音そのものを駆動するため、可視化のrAF（非表示タブで停止）とは
-    // 独立したタイマーで回す。バックグラウンドではブラウザーに間引かれるが凍結はしない
-    if (driveTimer === null) driveTimer = setInterval(audioDriveTick, 33);
+    applyModRouting(); // 末尾のupdateDriveTimer()が必要ならタイマーを起動する
+  }
+
+  // S&H・wtPos変調は音そのものを駆動するため、可視化のrAF（非表示タブで停止）とは
+  // 独立したタイマーで回す。ただし常時回すと無操作時もAudioParamスケジュールを
+  // 積み続けてバッテリーを消費するため、必要な間だけ起動する。
+  // 判定はoscA.waveに依存させない（wave切替はapplyModRoutingを通らないため、
+  // waveで止めるとwt.basicへ戻したとき再開の機会がない）
+  function needsAudioDrive() {
+    return patch['lfo1.shape'] === 'sh' || wtPosModRoute() !== null;
+  }
+
+  function updateDriveTimer() {
+    const need = !!nodes && needsAudioDrive();
+    if (need && driveTimer === null) driveTimer = setInterval(audioDriveTick, 33);
+    else if (!need && driveTimer !== null) { clearInterval(driveTimer); driveTimer = null; }
   }
 
   // ---- パラメーター適用 ----
@@ -228,6 +240,7 @@ var SynthEngine = (() => {
       }
       modNodes.push({ dg, route: Object.assign({}, route) });
     }
+    updateDriveTimer(); // 配線の増減・S&H⇔通常波形の切替でタイマーの要否が変わる
   }
 
   function currentAdsr() {
@@ -345,6 +358,7 @@ var SynthEngine = (() => {
         if (m) {
           m.route.amt = value;
           smoothSet(m.dg.gain, value * m.route.range, def.smoothing);
+          updateDriveTimer(); // 非0→0でwtPos変調ルートが消える場合、ここでしか止まらない
         } else {
           applyModRouting();
         }
