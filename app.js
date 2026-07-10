@@ -161,7 +161,8 @@ function setParam(id, value) {
     renderAssigned();
     updateModRing();          // has-modクラス（非表示ノブの強制表示）を先に反映してから
     Viz.updateGeometry();     // 配線ジオメトリを計算する（非表示要素は座標が全て0になるため）
-  } else if (id === 'filter.cutoff' || id === 'oscA.wtPos' || id === 'oscA.level' || id === 'oscA.fine') {
+  } else if (id === 'filter.cutoff' || id === 'oscA.wtPos' || id === 'oscA.level' || id === 'oscA.fine'
+      || id === 'oscA.wave') { // waveはWT位置リングの表示条件（wt.basicのときだけ音に効く）に関わる
     updateModRing();
   }
   saveSettings();
@@ -418,6 +419,9 @@ function assignTo(knobParamId) {
   const d = describeChange('mod1.dst', 'none', dest, SynthEngine.getPatch());
   $('roAction').textContent = `LFO1 を ${destDef ? destDef.name : dest} に配線しました`;
   if (d) $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">見る場所: ${escapeHtml(d.watch)}</span>`;
+  if (dest === 'oscA.wtPos' && SynthEngine.getPatch()['oscA.wave'] !== 'wt.basic') {
+    $('roDetail').innerHTML += '　※WT位置の揺れは、波形を「WTベーシック」にすると音に効きます';
+  }
 }
 
 function unassign() {
@@ -468,6 +472,10 @@ function updateModRing() {
   // シンプルモードで隠れる発展ノブでも、変調が刺さっている間は表示する
   // （非表示のままだと変調線が座標0,0へ描かれ、揺れの確認もできないため）
   k.wrap.classList.add('has-mod');
+  // WT位置変調は wave=wt.basic のときだけ音に効く（audioDriveTickと同じ条件）。
+  // 効いていないのにリングと現在位置ドットを描くと「音も揺れているはず」と誤解させる
+  // ため描画は抑制する（has-modは残し、配線の存在と解除操作は維持する）
+  if (route.dst === 'oscA.wtPos' && patch['oscA.wave'] !== 'wt.basic') return;
   const bounds = modRingBounds(route, patch);
   if (!bounds) return;
   k.modRing.setAttribute('d', arcPath(32, angleOf(bounds.lo), angleOf(bounds.hi)));
