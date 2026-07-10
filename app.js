@@ -356,6 +356,22 @@ function attachKnobEvents(knob, def) {
 
 // ---------- 説明パネル（今なにが起きた？） ----------
 
+let srAnnounceTimer = null;
+function announceStatus(message) {
+  clearTimeout(srAnnounceTimer);
+  srAnnounceTimer = setTimeout(() => {
+    srAnnounceTimer = null;
+    const status = $('srStatus');
+    if (status) status.textContent = message;
+  }, 300);
+}
+
+function announceReadout() {
+  const action = $('roAction').textContent.trim();
+  const detail = $('roDetail').textContent.trim();
+  announceStatus([action, detail].filter(Boolean).join('。'));
+}
+
 function updateReadout(id, prev, next) {
   if (prev === next) return;
   const d = describeChange(id, prev, next, SynthEngine.getPatch());
@@ -364,6 +380,8 @@ function updateReadout(id, prev, next) {
   $('roDetail').innerHTML = `${escapeHtml(d.effect)}　<span class="watch">見る場所: ${escapeHtml(d.watch)}</span>`;
   onboardAfterFirstChange(id);
   flashReadout();
+  // ドラッグ中の連続更新はannounceStatus側でまとめ、最後の説明だけを読み上げる
+  announceReadout();
 }
 
 // ---------- さわるモードのマイクロオンボーディング ----------
@@ -384,6 +402,7 @@ function onboardOnPlay(note) {
   saveSettings();
   $('roAction').textContent = `${noteName(note)} が鳴っています`;
   $('roDetail').textContent = '鳴らしながら、FILTERのカットオフを回してみましょう。音とスペクトルが同時に変わります。';
+  announceReadout();
 }
 
 function onboardAfterFirstChange(id) {
@@ -412,6 +431,7 @@ function restoreOnboardPrompt() {
     $('roAction').textContent = '鍵盤を弾いてみよう';
     $('roDetail').textContent = '音が出たらノブを回すと、ここに「何をしたか・音がどうなるか・どこを見るか」が表示されます。PCキーボード（A W S E D…）でも演奏できます。';
   }
+  announceReadout();
 }
 
 // 説明パネルの更新を短いフラッシュで知らせる（アニメーションを毎回リスタートさせる）
@@ -450,6 +470,7 @@ function enterAssignMode() {
   }
   $('roAction').textContent = '割当モード: 光っているノブをクリック';
   $('roDetail').textContent = 'LFO1で揺らすノブを選びます。Escキーまたはもう一度ボタンでキャンセル。';
+  announceReadout();
 }
 
 function exitAssignMode() {
@@ -483,6 +504,7 @@ function assignTo(knobParamId) {
       $('roDetail').innerHTML += '　準備ができたら、上の「つくる」で課題にも挑戦してみましょう';
     }
   }
+  announceReadout();
 }
 
 function unassign() {
@@ -829,6 +851,7 @@ function setupPresets() {
       applyPreset(patch);
       $('roAction').textContent = `プリセット「${name}」を読み込みました`;
       $('roDetail').textContent = 'ノブの位置を眺めてから音を鳴らすと「この音はこう作られている」が見えてきます。';
+      announceReadout();
     }
     e.target.value = '';
   });
@@ -846,6 +869,7 @@ function setupPresets() {
     applyPreset({});
     $('roAction').textContent = '初期状態に戻しました';
     $('roDetail').textContent = 'まっさらなノコギリ波から音作りを始めましょう。';
+    announceReadout();
   });
 }
 
@@ -1132,6 +1156,7 @@ function renderMake(body) {
     setAuditionTargetView(true);
     $('roAction').textContent = 'お手本を再生中…';
     $('roDetail').textContent = 'つづけて、いまの音が鳴ります。違いを探しながら聴いてみましょう。';
+    announceReadout();
     playAuditionPhrase(r.audition, {
       patch: targetFull,
       onNoteOn: scheduleTargetGhostCapture(r.audition),
@@ -1141,6 +1166,7 @@ function renderMake(body) {
         compareTimer = setTimeout(() => {
           compareTimer = null;
           $('roAction').textContent = 'つづけて、いまの音…';
+          announceReadout();
           playAuditionPhrase(r.audition, {
             onDone: () => document.body.classList.remove('audition-lock'),
           });
@@ -1277,7 +1303,9 @@ function revealNextHint() {
   resetStallTimer();
   const levelIdx = lesson.hints.length;
   lesson.hints.push({ label: HINT_LABELS[levelIdx], text: hintTextAt(lesson.recipe, levelIdx) });
+  const openedHint = lesson.hints[lesson.hints.length - 1];
   renderLesson();
+  announceStatus(`${openedHint.label}。${openedHint.text}`);
 }
 
 function doCheck() {
@@ -1300,6 +1328,9 @@ function doCheck() {
     if (lesson.idleTimer) clearTimeout(lesson.idleTimer);
   }
   renderLesson();
+  announceStatus(off.length === 0
+    ? `答え合わせ。できあがり。${lesson.recipe.insight}`
+    : `答え合わせ。${mismatchText(off)}`);
 }
 
 function startRecipe(r) {
@@ -1318,6 +1349,7 @@ function startRecipe(r) {
   armStallTimer();
   $('roAction').textContent = `「${r.title}」を開始`;
   $('roDetail').textContent = 'お手本を聴いて、どこがどう違うか自分の耳で確かめてみましょう。';
+  announceReadout();
 }
 
 // ノブが動くたびに呼ばれる。答え合わせやヒントの内容はここでは変えず、
