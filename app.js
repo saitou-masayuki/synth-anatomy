@@ -227,7 +227,7 @@ function attachKnobEvents(knob, def) {
   let curNorm = 0;
   let startValue = 0;
   let dragDist = 0;   // pointerdownからの累積移動量（タップとドラッグの区別に使う）
-  let lastTapAt = 0;  // タッチのダブルタップ検出用
+  let lastTapAt = null; // タッチのダブルタップ検出用（未タップはnull）
 
   knob.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return; // 右クリック等でドラッグ状態に入らない
@@ -311,9 +311,9 @@ function attachKnobEvents(knob, def) {
   // ポインターイベントから自前で検出する（350ms以内・移動6px未満の2連続タップ）。
   // マウスは従来どおりdblclickに任せる
   knob.addEventListener('pointerup', (e) => {
-    if (e.pointerType !== 'touch' || dragDist > 6) { lastTapAt = 0; return; }
+    if (e.pointerType !== 'touch' || dragDist > 6) { lastTapAt = null; return; }
     const now = performance.now();
-    if (now - lastTapAt < 350) { lastTapAt = 0; resetToDefault(); }
+    if (lastTapAt !== null && now - lastTapAt < 350) { lastTapAt = null; resetToDefault(); }
     else lastTapAt = now;
   });
 
