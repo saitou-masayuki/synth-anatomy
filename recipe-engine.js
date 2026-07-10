@@ -25,6 +25,11 @@ function recipeParamDistance(id, value, targetValue) {
   if (def.type === 'enum' || def.type === 'bool') {
     return value === targetValue ? 0 : 1;
   }
+  // 変調の深さ: mod-engine.resolveModRoutes は amt=0 のルートを「配線なし」として
+  // 破棄するため、目標が揺れあり(amt≠0)なのに現在値が0では音は一切揺れない。
+  // 極小目標（ビブラートの0.04等）は距離だけ見ると許容誤差内に収まってしまうので、
+  // 揺れの有無の不一致は enum と同じ二値（距離1）として扱う
+  if (/^mod\d+\.amt$/.test(id) && !value !== !targetValue) return 1;
   return Math.abs(normParam(id, value) - normParam(id, targetValue));
 }
 
