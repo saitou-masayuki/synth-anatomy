@@ -843,8 +843,14 @@ function lessonRequiredParamIds(target) {
   return [...ids];
 }
 
+// 聴き比べの「お手本→いまの音」連結タイマー。中断漏れがあると、別の操作の最中に
+// 突然2本目の再生が始まってしまうため、stopAudition()で必ず破棄する
+let compareTimer = null;
+
 // 試聴（お手本/いまの音）を中断し、UIロックも解除する
 function stopAudition() {
+  clearTimeout(compareTimer);
+  compareTimer = null;
   SynthEngine.stopPhrase();
   document.body.classList.remove('audition-lock');
 }
@@ -984,6 +990,28 @@ function renderMake(body) {
   const btnCurrent = el('button', null, 'いまの音を聴く');
   btnCurrent.type = 'button';
   btnCurrent.addEventListener('click', () => { stopAudition(); SynthEngine.playPhrase(r.audition); });
+  // 音色の記憶は数秒しか持たないため、お手本→いまの音を短い間隔で連続再生して
+  // 差をその場で聴き比べられるようにする
+  const btnCompare = el('button', null, '聴き比べ');
+  btnCompare.type = 'button';
+  btnCompare.addEventListener('click', () => {
+    stopAudition();
+    document.body.classList.add('audition-lock');
+    $('roAction').textContent = 'お手本を再生中…';
+    $('roDetail').textContent = 'つづけて、いまの音が鳴ります。違いを探しながら聴いてみましょう。';
+    SynthEngine.playPhrase(r.audition, {
+      patch: targetFull,
+      onDone: () => {
+        compareTimer = setTimeout(() => {
+          compareTimer = null;
+          $('roAction').textContent = 'つづけて、いまの音…';
+          SynthEngine.playPhrase(r.audition, {
+            onDone: () => document.body.classList.remove('audition-lock'),
+          });
+        }, 400);
+      },
+    });
+  });
   const btnBack = el('button', null, '一覧へ戻る');
   btnBack.type = 'button';
   btnBack.addEventListener('click', () => {
@@ -996,6 +1024,7 @@ function renderMake(body) {
   });
   actions.appendChild(btnTarget);
   actions.appendChild(btnCurrent);
+  actions.appendChild(btnCompare);
   actions.appendChild(btnBack);
   body.appendChild(actions);
 
