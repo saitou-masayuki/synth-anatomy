@@ -7,6 +7,10 @@
 // 自動的にブロック単位へ集約する（ブロック一覧をコンテンツ側で手動管理する必要がない）。
 
 var RECIPE_DEFAULT_TOL = 0.06;
+// 正規化・逆正規化の浮動小数点丸めで、許容誤差ちょうどの値が
+// 0.040000000000000036 のように境界をわずかに超えるのを吸収する。
+// 判定幅そのものを広げないよう、正規化空間で十分小さい値に固定する。
+var RECIPE_TOL_EPSILON = 1e-12;
 
 // targetのparamIdから、関係するブロック名の一覧を重複なく返す
 function recipeTargetBlocks(target) {
@@ -42,7 +46,7 @@ function recipeJudgeAll(patch, target, tol) {
   for (const [id, targetValue] of Object.entries(target)) {
     const def = paramById(id);
     if (!def) continue;
-    if (recipeParamDistance(id, patch[id], targetValue) > t) offBlocks.add(def.block);
+    if (recipeParamDistance(id, patch[id], targetValue) > t + RECIPE_TOL_EPSILON) offBlocks.add(def.block);
   }
   return [...offBlocks];
 }
