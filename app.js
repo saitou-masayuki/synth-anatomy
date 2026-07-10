@@ -776,6 +776,8 @@ const lesson = {
   recipe: null,     // 挑戦中のレシピ
   hints: [],        // 開いたヒント（{label, text}）。一度開いたら閉じずに残す
   mismatch: null,   // 直近の答え合わせ結果（ズレているブロック名の配列）。未実施ならnull
+  lastDistance: null, // 直近の答え合わせ時の全体距離（トレンド表示用）
+  trend: null,      // 前回の答え合わせと比べた勢い（closer | farther | same）
   done: false,
   idleTimer: null,  // 一定時間操作が無いとヒントをそっと促す
 };
@@ -1073,9 +1075,18 @@ function currentMismatchBlocks() {
   return recipeJudgeAll(SynthEngine.getPatch(), lesson.recipe.target, lesson.recipe.tol);
 }
 
+// トレンド（前回の答え合わせとの比較）。どのパラメーターがどれだけ、は明かさず勢いだけ伝える
+const TREND_TEXT = {
+  closer: '前回より近づいています',
+  farther: '前回より遠ざかっています',
+  same: '前回からあまり変わっていません',
+};
+
 function mismatchText(off) {
   if (off.length === 0) return 'ズレなし';
-  return `ズレているものが、あと ${off.length} 個あります（${off.map((b) => BLOCK_LABELS[b] || b).join('・')}周辺）`;
+  let s = `ズレているものが、あと ${off.length} 個あります（${off.map((b) => BLOCK_LABELS[b] || b).join('・')}周辺）`;
+  if (lesson.trend) s += `。${TREND_TEXT[lesson.trend]}`;
+  return s;
 }
 
 // ヒント段階ごとの文言。段階0=抽象的な聴きどころ（レシピ固定）、段階1=注目ブロック名
@@ -1105,6 +1116,11 @@ function doCheck() {
   if (!lesson.recipe || lesson.done || SynthEngine.auditioning) return;
   resetStallTimer();
   const off = currentMismatchBlocks();
+  // 全体距離の推移から「近づいているか」の勢いを出す（2回目以降の不一致時のみ表示）
+  const dist = recipeTotalDistance(SynthEngine.getPatch(), lesson.recipe.target);
+  lesson.trend = (lesson.lastDistance === null || off.length === 0) ? null
+    : (lesson.lastDistance - dist > 0.02 ? 'closer' : (dist - lesson.lastDistance > 0.02 ? 'farther' : 'same'));
+  lesson.lastDistance = dist;
   lesson.mismatch = off;
   if (off.length === 0) {
     lesson.done = true;
@@ -1123,6 +1139,8 @@ function startRecipe(r) {
   lesson.recipe = r;
   lesson.hints = [];
   lesson.mismatch = null;
+  lesson.lastDistance = null;
+  lesson.trend = null;
   lesson.done = false;
   renderLesson();
   applyProximityFrames();

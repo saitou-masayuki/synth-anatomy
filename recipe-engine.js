@@ -47,6 +47,16 @@ function recipeJudgeAll(patch, target, tol) {
   return [...offBlocks];
 }
 
+// target全体の平均距離（0=完全一致、1=最大の隔たり）。答え合わせの「前回より
+// 近づいたか」のトレンド表示に使う。ブロック判定（最悪1件方式）とは目的が違い、
+// こちらは全体の進み具合を連続値で追いたいので平均を使う
+function recipeTotalDistance(patch, target) {
+  const ids = Object.keys(target).filter((id) => paramById(id));
+  if (ids.length === 0) return 0;
+  const sum = ids.reduce((acc, id) => acc + recipeParamDistance(id, patch[id], target[id]), 0);
+  return sum / ids.length;
+}
+
 // 指定ブロックの「近さ」を0..1で返す（1=完全一致）。targetのうちそのブロックに
 // 属するパラメーターだけを対象に、最も遠い1件の距離から算出する。
 // recipeJudgeAll（「1つでも許容誤差を超えたらそのブロックはアウト」）と基準を揃えるため、
