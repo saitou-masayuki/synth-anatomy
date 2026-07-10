@@ -24,20 +24,26 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) return;
+  // cache:'no-cache' でHTTPキャッシュに必ず再検証させる。キャッシュヘッダーを返さない
+  // ホスティングだと、ヒューリスティックキャッシュが古いファイルを「新鮮」とみなして
+  // fetchがネットワークに出ず、ネットワーク優先の意図が崩れるため
+  const network = fetch(e.request, { cache: 'no-cache' }).then((res) => ({
+    res,
+    // respondWithが応答本文を消費する前に、キャッシュ保存用を複製する
+    // 4xx/5xxやopaque応答は、オフライン時のエラー固定を避けるため保存しない
+    copy: res.ok && res.type === 'basic' ? res.clone() : null,
+  }));
+
+  // キャッシュ更新をイベント寿命に紐づけつつ、ネットワーク応答自体は待たせない
+  const cacheUpdate = network.then(({ copy }) => {
+    if (!copy) return;
+    return caches.open(CACHE).then((c) => c.put(e.request, copy));
+  });
+  e.waitUntil(cacheUpdate.catch(() => {}));
+
   e.respondWith(
-    // cache:'no-cache' でHTTPキャッシュに必ず再検証させる。キャッシュヘッダーを返さない
-    // ホスティングだと、ヒューリスティックキャッシュが古いファイルを「新鮮」とみなして
-    // fetchがネットワークに出ず、ネットワーク優先の意図が崩れるため
-    fetch(e.request, { cache: 'no-cache' })
-      .then((res) => {
-        // 成功した同一オリジン応答だけをキャッシュする。4xx/5xxやopaque応答まで
-        // 保存すると、オフライン時にエラーページが配信され続けてしまう
-        if (res.ok && res.type === 'basic') {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-        }
-        return res;
-      })
+    network
+      .then(({ res }) => res)
       .catch(() => caches.match(e.request, { ignoreSearch: e.request.mode === 'navigate' }))
   );
 });
