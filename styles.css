@@ -345,6 +345,7 @@ footer .lg-mod { color: var(--mod-line); }
 
   /* 指で確実に押せる高さ（44px）と判読できる文字サイズを確保する */
   .icon-btn, button.text-btn { font-size: 13px; padding: 9px 12px; min-height: 44px; }
+  #themeBtn { min-width: 44px; flex: none; }
   select { padding: 9px 12px; min-height: 44px; }
   .view-tabs button { font-size: 13px; min-height: 44px; }
   #modeDesc { font-size: 12px; }
@@ -364,8 +365,8 @@ footer .lg-mod { color: var(--mod-line); }
   .scope-label { font-size: 10px; }
 
   button.assign-btn { padding: 10px 14px; min-height: 44px; }
-  .mod-assign .chip { padding: 6px 12px; }
-  .mod-assign .chip button { padding: 4px 6px; }
+  .mod-assign .chip { padding: 0 0 0 12px; min-height: 44px; }
+  .mod-assign .chip button { align-self: stretch; min-width: 44px; min-height: 44px; padding: 0; }
   .check-btn, .lesson-actions button, .hint-btn { min-height: 44px; }
 
   /* 案内バナー: 文章を1行目全幅にして、ボタン2つを2行目にまとめる（片方だけ孤立させない） */

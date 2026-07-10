@@ -502,7 +502,9 @@ function renderAssigned() {
     const chip = document.createElement('span');
     chip.className = 'chip';
     chip.innerHTML = `LFO1 〜▶ ${escapeHtml(dest ? dest.name : route.dst)} <button type="button" title="割当を解除">×</button>`;
-    chip.querySelector('button').addEventListener('click', unassign);
+    const removeBtn = chip.querySelector('button');
+    removeBtn.setAttribute('aria-label', `LFO1から${dest ? dest.name : route.dst}への割当を解除`);
+    removeBtn.addEventListener('click', unassign);
     list.appendChild(chip);
   }
   if (routes.length === 0) {
