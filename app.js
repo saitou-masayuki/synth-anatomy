@@ -1073,6 +1073,7 @@ function applyMode(mode) {
 function applyTheme(theme) {
   settings.theme = theme;
   document.documentElement.dataset.theme = theme;
+  Viz.invalidateThemeCache(); // スコープ描画色のキャッシュを新テーマで引き直させる
   saveSettings();
 }
 

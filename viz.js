@@ -35,9 +35,19 @@ var Viz = (() => {
     c.g.setTransform(DPR, 0, 0, DPR, 0, 0);
   }
 
+  // CSS変数はテーマが変わらない限り不変。getComputedStyleはスタイル再計算を強制するため、
+  // 毎フレーム呼ぶとモバイルでフレーム落ち・発熱の要因になる。キャッシュして参照し、
+  // テーマ切替時（app.jsのapplyTheme）だけ invalidateThemeCache() で捨てる
+  let cssVarCache = {};
   function cssVar(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    let v = cssVarCache[name];
+    if (v === undefined) {
+      v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      cssVarCache[name] = v;
+    }
+    return v;
   }
+  function invalidateThemeCache() { cssVarCache = {}; }
 
   // ---- 波形描画（ゼロクロストリガーで静止させる。流れる波形は読めない） ----
 
@@ -466,6 +476,7 @@ var Viz = (() => {
     releaseGhosts,
     pulseScope,
     setScopeActive,
+    invalidateThemeCache,
     set onMirror(fn) { onMirror = fn; },
   };
 })();
