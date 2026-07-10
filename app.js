@@ -40,9 +40,12 @@ function saveSettings() {
   saveTimer = setTimeout(persistNow, 300);
 }
 // iOS PWAは背景化で即凍結・破棄されることがあり、デバウンス中（300ms以内）の編集が
-// 失われる。背景化・ページ離脱の瞬間に即時書き込みする（persistNowは冪等なので二重発火は無害）
-window.addEventListener('pagehide', persistNow);
-document.addEventListener('visibilitychange', () => { if (document.hidden) persistNow(); });
+// 失われる。背景化・ページ離脱の瞬間は試聴を止めて自分のパッチへ戻してから即時書き込みする。
+// persistNowだけでは、お手本の一時パッチ中に最新の自分の音を保存できない
+window.addEventListener('pagehide', () => { stopAudition(); persistNow(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { stopAudition(); persistNow(); }
+});
 
 // ---------- ノブ・セレクトの自動生成 ----------
 
