@@ -1,7 +1,8 @@
 /* シンセ解剖図のスタイル。テーマ変数は chord-lab の体系を踏襲（:root[data-theme] で切替） */
 :root[data-theme="dark"] {
   --bg: #12141A; --panel: #1B1E27; --panel-2: #232732; --border: #2E3340;
-  --text: #EEF0F5; --text-dim: #9AA0AE; --text-faint: #5A6070;
+  /* text-faint はWCAG AA（4.5:1）を満たす明るさにする（旧#5A6070は2.9:1で判読が厳しい） */
+  --text: #EEF0F5; --text-dim: #9AA0AE; --text-faint: #8A91A5;
   --accent: #7AA2F7; --accent-soft: #A8C2FF; --accent-dark: #1E2C4A; --accent-text: #EAF1FF;
   --ok: #9ECE6A; --ng: #E8884E;
   --audio-line: #7AA2F7;       /* 音声経路の色 */
@@ -14,7 +15,8 @@
 }
 :root[data-theme="light"] {
   --bg: #F5F4F0; --panel: #FFFFFF; --panel-2: #ECEBE5; --border: #D9D8CF;
-  --text: #26262A; --text-dim: #6E6E78; --text-faint: #A2A2AA;
+  /* ライトのtext-faintはAAを満たすとdimと同等の濃さになる。階層差はフォントサイズで表す */
+  --text: #26262A; --text-dim: #6E6E78; --text-faint: #6E6E78;
   --accent: #3465C9; --accent-soft: #7A99DD; --accent-dark: #DCE6FA; --accent-text: #FFFFFF;
   --ok: #2E8B57; --ng: #C26A2E;
   --audio-line: #3465C9; --mod-line: #C98A1F; --env-line: #2E8B57;
