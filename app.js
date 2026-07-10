@@ -1061,6 +1061,8 @@ function renderMake(body) {
   btnTarget.addEventListener('click', () => {
     // 再生中はエンジンのパッチがお手本に一時差し替わるため、ノブ操作をロックする
     stopAudition();
+    // 一時パッチへ切り替える前に、直前まで作っていた音をデバウンスを待たず保存する
+    persistNow();
     document.body.classList.add('audition-lock');
     setAuditionTargetView(true);
     SynthEngine.playPhrase(r.audition, {
@@ -1082,6 +1084,7 @@ function renderMake(body) {
   btnCompare.type = 'button';
   btnCompare.addEventListener('click', () => {
     stopAudition();
+    persistNow();
     document.body.classList.add('audition-lock');
     setAuditionTargetView(true);
     $('roAction').textContent = 'お手本を再生中…';
