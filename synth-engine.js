@@ -358,7 +358,9 @@ var SynthEngine = (() => {
         if (m) {
           m.route.amt = value;
           smoothSet(m.dg.gain, value * m.route.range, def.smoothing);
-          updateDriveTimer(); // 非0→0でwtPos変調ルートが消える場合、ここでしか止まらない
+          // このパスに来るのはaudio系ルートのみ（control系=wtPosはmodNodesに載らず
+          // else側のapplyModRoutingを通る）で要否は変わらないが、防御的に再評価する
+          updateDriveTimer();
         } else {
           applyModRouting();
         }
