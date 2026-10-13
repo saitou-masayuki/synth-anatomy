@@ -1,0 +1,6 @@
+.DS_Store
+.wrangler/
+.env*
+.dev.vars*
+.claude/settings.local.json
+.claude/worktrees/

@@ -25,8 +25,8 @@
 ## 開発
 
 ```bash
-# ローカルサーバー
-python3 -m http.server 8767
+# ローカルサーバー（--bind で手元の端末からの接続だけに限定）
+python3 -m http.server 8767 --bind 127.0.0.1
 
 # テスト（純粋ロジック層）
 node --test test/*.test.mjs
